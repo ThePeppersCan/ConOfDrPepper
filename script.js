@@ -31,13 +31,19 @@ let combatState = null;
 const combatKeys = new Set();
 let selectedCombatWeapon = 'sword';
 let selectedCombatDifficulty = 'medium';
+let selectedCombatLocation = 'lumbridge';
+let selectedSlayerDifficulty = 'medium';
 let rcRoom = null, rcPollTimer = null, rcAnimating = false, rcAim = null;
 const rcRuneImages = {};
 ['fire','chaos','wrath'].forEach(name => { const img = new Image(); img.src = `assets/${name}-rune.${name === 'fire' ? 'webp' : 'png'}`; img.onload = () => { rcRuneImages[name] = img; if (rcRoom) drawRcTable(); }; });
 let sailingRunning=false, sailingFrame=null, sailingLast=0, sailingStartedAt=0, sailingState=null;
 const sailingKeys=new Set();
 const AGILITY_TARGETS = 15;
-const JAD_HITS = 12;
+const SLAYER_DIFFICULTIES = {
+  easy: { label:'Easy', hits:8, baseSpeed:2050, speedStep:30, xp:90 },
+  medium: { label:'Medium', hits:12, baseSpeed:1750, speedStep:45, xp:150 },
+  hard: { label:'Hard', hits:16, baseSpeed:1450, speedStep:55, xp:240 }
+};
 
 const AUTH_DOMAIN = 'conofdrpepper.local'; // Kept internally so existing accounts continue to work
 
@@ -558,7 +564,8 @@ function resetJadSimulator(message = 'One wrong prayer ends the attempt.') {
   $('jadBoss').className = 'jad-boss';
   $('jadProjectile').className = 'jad-projectile';
   $('jadCue').textContent = 'Press START FIGHT';
-  $('jadBlocks').textContent = `0 / ${JAD_HITS}`;
+  const config = SLAYER_DIFFICULTIES[selectedSlayerDifficulty];
+  $('jadBlocks').textContent = `0 / ${config.hits}`;
   $('jadHealthText').textContent = '100%';
   $('jadHealthFill').style.width = '100%';
   $('jadArena').classList.remove('danger');
@@ -569,9 +576,21 @@ function resetJadSimulator(message = 'One wrong prayer ends the attempt.') {
   $('jadMessage').textContent = message;
 }
 
+function selectSlayerDifficulty(type) {
+  if (!SLAYER_DIFFICULTIES[type] || jadRunning) return;
+  selectedSlayerDifficulty = type;
+  document.querySelectorAll('.slayer-difficulty-choice').forEach(button => {
+    const active = button.dataset.slayerDifficulty === type;
+    button.classList.toggle('selected', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  resetJadSimulator(`${SLAYER_DIFFICULTIES[type].label} selected. One wrong prayer still ends the attempt.`);
+}
+
 function openSlayer() {
   if (!character) return;
   resetJadSimulator();
+  selectSlayerDifficulty(selectedSlayerDifficulty);
   $('slayerDialog').showModal();
 }
 
@@ -599,7 +618,8 @@ function beginJadAttack() {
   boss.className = `jad-boss attacking ${jadAttack}`;
   $('jadProjectile').className = `jad-projectile ${jadAttack}`;
   $('jadCue').textContent = jadAttack === 'ranged' ? 'STOMP — RANGED!' : 'JAD RISES — MAGIC!';
-  const speed = Math.max(1050, 1750 - jadBlocks * 45);
+  const cfg = SLAYER_DIFFICULTIES[selectedSlayerDifficulty];
+  const speed = Math.max(selectedSlayerDifficulty === 'hard' ? 650 : 900, cfg.baseSpeed - jadBlocks * cfg.speedStep);
   jadResolveTimer = setTimeout(resolveJadAttack, speed);
 }
 
@@ -619,22 +639,23 @@ async function resolveJadAttack() {
   }
 
   jadBlocks += 1;
-  const health = Math.max(0, 100 - (jadBlocks / JAD_HITS) * 100);
-  $('jadBlocks').textContent = `${jadBlocks} / ${JAD_HITS}`;
+  const targetHits = SLAYER_DIFFICULTIES[selectedSlayerDifficulty].hits;
+  const health = Math.max(0, 100 - (jadBlocks / targetHits) * 100);
+  $('jadBlocks').textContent = `${jadBlocks} / ${targetHits}`;
   $('jadHealthText').textContent = `${Math.round(health)}%`;
   $('jadHealthFill').style.width = `${health}%`;
   $('jadArena').classList.toggle('danger', health > 0 && health <= 20);
   $('jadCue').textContent = 'BLOCKED!';
   $('jadBoss').className = 'jad-boss blocked';
 
-  if (jadBlocks >= JAD_HITS) {
+  if (jadBlocks >= targetHits) {
     jadRunning = false;
     stopJadMusic(1000);
     $('jadBoss').className = 'jad-boss defeated';
     $('jadCue').textContent = 'JAD DEFEATED';
     $('jadMessage').textContent = 'Jad defeated — saving Slayer XP...';
     busy = true;
-    const { data, error } = await db.rpc('complete_jad_simulator', { p_hits: JAD_HITS });
+    const { data, error } = await db.rpc('complete_jad_simulator', { p_hits: targetHits, p_difficulty: selectedSlayerDifficulty });
     busy = false;
     if (error || !data?.[0]) {
       console.error(error);
@@ -689,6 +710,18 @@ function selectCombatDifficulty(type) {
   $('combatMessage').textContent = `${names[type]} selected. Choose a weapon and start the run.`;
 }
 
+function selectCombatLocation(type) {
+  if (!['lumbridge','fight-caves','gauntlet'].includes(type) || combatRunning) return;
+  selectedCombatLocation = type;
+  document.querySelectorAll('.combat-location-choice').forEach(button => {
+    const active = button.dataset.location === type;
+    button.classList.toggle('selected', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  const names = {lumbridge:'Lumbridge', 'fight-caves':'Fight Caves', gauntlet:'Corrupted Gauntlet'};
+  $('combatMessage').textContent = `${names[type]} selected. Choose a weapon and difficulty.`;
+}
+
 function openCombat() {
   if (!character) return;
   resetCombatGame();
@@ -713,6 +746,7 @@ function resetCombatGame(message = 'Complete the minute for the best Attack, Str
   $('combatMessage').textContent = message;
   selectCombatWeapon(selectedCombatWeapon);
   selectCombatDifficulty(selectedCombatDifficulty);
+  selectCombatLocation(selectedCombatLocation);
   const canvas = $('combatCanvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -726,6 +760,7 @@ function startCombatGame() {
   combatState = {
     weapon: selectedCombatWeapon,
     difficulty: selectedCombatDifficulty,
+    location: selectedCombatLocation,
     player: { x: canvas.width / 2, y: canvas.height / 2, r: 15, hp: 100, maxHp: 100, speed: 185, damage: weapon.damage, range: weapon.range, attackRate: weapon.attackRate, lastAttack: 0, armour: 0 },
     enemies: [], projectiles: [], slashes: [], chains: [], orbs: [], particles: [],
     kills: 0, damage: 0, runXp: 0, runLevel: 1, nextLevel: 8,
@@ -739,7 +774,8 @@ function startCombatGame() {
   combatLast = combatStartedAt;
   $('combatIntro').classList.add('hidden');
   $('combatUpgrade').classList.add('hidden');
-  $('combatMessage').textContent = `${weapon.name} equipped — move, survive and auto-attack!`;
+  const locationName={lumbridge:'Lumbridge','fight-caves':'Fight Caves',gauntlet:'Corrupted Gauntlet'}[selectedCombatLocation];
+  $('combatMessage').textContent = `${weapon.name} equipped in ${locationName} — move, survive and auto-attack!`;
   combatFrame = requestAnimationFrame(combatLoop);
 }
 
@@ -834,11 +870,17 @@ function spawnCombatEnemy() {
   const edge = Math.floor(Math.random()*4); let x,y;
   if(edge===0){x=Math.random()*760;y=-20}else if(edge===1){x=780;y=Math.random()*430}else if(edge===2){x=Math.random()*760;y=450}else{x=-20;y=Math.random()*430}
   const roll=Math.random();
-  const type=roll<.52?'goblin':roll<.82?'cow':'skeleton';
-  const stats={goblin:[26,68,9,13,1],cow:[48,42,12,18,2],skeleton:[34,88,14,14,2]}[type];
-  const timeScale=1+combatState.elapsed/95;
-  const hpScale=timeScale*combatState.difficultyConfig.hp;
-  s.enemies.push({type,x,y,hp:stats[0]*hpScale,maxHp:stats[0]*hpScale,speed:stats[1]*timeScale*combatState.difficultyConfig.speed,damage:stats[2]*combatState.difficultyConfig.damage,r:stats[3],xp:stats[4],hitCooldown:0});
+  const tables={
+    lumbridge:[['goblin',.50,[26,68,9,13,1]],['cow',.80,[48,42,12,18,2]],['skeleton',1,[34,88,14,14,2]]],
+    'fight-caves':[['tz-kih',.48,[30,92,10,13,1]],['tz-kek',.80,[58,52,15,18,2]],['tok-xil',1,[42,78,17,15,3]]],
+    gauntlet:[['corrupted-rat',.38,[34,100,11,12,1]],['corrupted-unicorn',.70,[62,66,16,18,3]],['corrupted-dragon',.94,[82,58,20,20,4]],['hunllef',1,[190,44,27,27,8]]]
+  };
+  const table=tables[s.location]||tables.lumbridge;
+  const picked=table.find(row=>roll<row[1])||table[table.length-1];
+  const type=picked[0],stats=picked[2];
+  const timeScale=1+s.elapsed/95;
+  const hpScale=timeScale*s.difficultyConfig.hp;
+  s.enemies.push({type,x,y,hp:stats[0]*hpScale,maxHp:stats[0]*hpScale,speed:stats[1]*timeScale*s.difficultyConfig.speed,damage:stats[2]*s.difficultyConfig.damage,r:stats[3],xp:stats[4],hitCooldown:0});
 }
 
 function damageCombatEnemy(enemy, amount) {
@@ -891,7 +933,15 @@ async function finishCombat(survived) {
   toast('Combat XP saved!',3500);
 }
 
-function drawCombatBackdrop(ctx,w,h){ctx.fillStyle='#152416';ctx.fillRect(0,0,w,h);for(let x=0;x<w;x+=40){for(let y=0;y<h;y+=40){ctx.fillStyle=((x+y)/40)%2?'#183019':'#1c351d';ctx.fillRect(x,y,40,40)}}ctx.fillStyle='#65513a';ctx.fillRect(0,0,w,12);ctx.fillRect(0,h-12,w,12);ctx.fillRect(0,0,12,h);ctx.fillRect(w-12,0,12,h)}
+function drawCombatBackdrop(ctx,w,h){
+  const location=combatState?.location||selectedCombatLocation;
+  const palette={lumbridge:['#152416','#183019','#1c351d','#65513a'],'fight-caves':['#28120d','#38160f','#451d11','#8a4b25'],gauntlet:['#24082c','#32103d','#42114d','#b83378']}[location];
+  ctx.fillStyle=palette[0];ctx.fillRect(0,0,w,h);
+  for(let x=0;x<w;x+=40)for(let y=0;y<h;y+=40){ctx.fillStyle=((x+y)/40)%2?palette[1]:palette[2];ctx.fillRect(x,y,40,40)}
+  if(location==='fight-caves'){ctx.fillStyle='#f07b2b55';for(let x=30;x<w;x+=125){ctx.beginPath();ctx.arc(x,h-18,22,0,Math.PI*2);ctx.fill()}}
+  if(location==='gauntlet'){ctx.strokeStyle='#f05ab955';ctx.lineWidth=2;for(let x=20;x<w;x+=70){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+30,h);ctx.stroke()}}
+  ctx.fillStyle=palette[3];ctx.fillRect(0,0,w,12);ctx.fillRect(0,h-12,w,12);ctx.fillRect(0,0,12,h);ctx.fillRect(w-12,0,12,h);
+}
 
 const sailingMusic = new Audio('assets/sailing-theme.mp3');
 sailingMusic.loop = true;
@@ -1041,7 +1091,21 @@ function drawCombatPlayer(ctx,p,weapon){
   }
   ctx.restore()
 }
-function drawCombatEnemy(ctx,e){ctx.save();ctx.translate(e.x,e.y);if(e.type==='goblin'){ctx.fillStyle='#789447';ctx.fillRect(-10,-13,20,22);ctx.fillStyle='#4d632f';ctx.fillRect(-13,-9,5,8);ctx.fillRect(8,-9,5,8)}else if(e.type==='cow'){ctx.fillStyle='#eee8da';ctx.fillRect(-18,-10,36,22);ctx.fillStyle='#5e4637';ctx.fillRect(-14,-8,9,8);ctx.fillRect(5,1,10,8);ctx.fillStyle='#eee8da';ctx.fillRect(14,-6,12,12)}else{ctx.fillStyle='#d7d1b7';ctx.beginPath();ctx.arc(0,-8,9,0,7);ctx.fill();ctx.fillRect(-4,0,8,20);ctx.strokeStyle='#d7d1b7';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(-3,5);ctx.lineTo(-13,14);ctx.moveTo(3,5);ctx.lineTo(13,14);ctx.stroke()}ctx.fillStyle='#360b0b';ctx.fillRect(-14,-e.r-8,28,4);ctx.fillStyle='#b52b35';ctx.fillRect(-14,-e.r-8,28*Math.max(0,e.hp/e.maxHp),4);ctx.restore()}
+function drawCombatEnemy(ctx,e){
+  ctx.save();ctx.translate(e.x,e.y);
+  if(e.type==='goblin'){ctx.fillStyle='#789447';ctx.fillRect(-10,-13,20,22);ctx.fillStyle='#4d632f';ctx.fillRect(-13,-9,5,8);ctx.fillRect(8,-9,5,8)}
+  else if(e.type==='cow'){ctx.fillStyle='#eee8da';ctx.fillRect(-18,-10,36,22);ctx.fillStyle='#5e4637';ctx.fillRect(-14,-8,9,8);ctx.fillRect(5,1,10,8);ctx.fillStyle='#eee8da';ctx.fillRect(14,-6,12,12)}
+  else if(e.type==='skeleton'){ctx.fillStyle='#d7d1b7';ctx.beginPath();ctx.arc(0,-8,9,0,7);ctx.fill();ctx.fillRect(-4,0,8,20);ctx.strokeStyle='#d7d1b7';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(-3,5);ctx.lineTo(-13,14);ctx.moveTo(3,5);ctx.lineTo(13,14);ctx.stroke()}
+  else if(e.type==='tz-kih'){ctx.fillStyle='#df7b2d';ctx.beginPath();ctx.moveTo(0,-15);ctx.lineTo(13,10);ctx.lineTo(0,16);ctx.lineTo(-13,10);ctx.closePath();ctx.fill();ctx.fillStyle='#ffcf54';ctx.fillRect(-3,-5,6,6)}
+  else if(e.type==='tz-kek'){ctx.fillStyle='#a63c22';ctx.fillRect(-16,-14,32,29);ctx.fillStyle='#e88732';ctx.beginPath();ctx.moveTo(-15,-12);ctx.lineTo(-5,-25);ctx.lineTo(0,-12);ctx.moveTo(15,-12);ctx.lineTo(5,-25);ctx.lineTo(0,-12);ctx.fill()}
+  else if(e.type==='tok-xil'){ctx.fillStyle='#6f3025';ctx.beginPath();ctx.arc(0,0,16,0,7);ctx.fill();ctx.strokeStyle='#db7d35';ctx.lineWidth=5;for(let a=0;a<7;a++){const q=a*Math.PI*2/7;ctx.beginPath();ctx.moveTo(Math.cos(q)*12,Math.sin(q)*12);ctx.lineTo(Math.cos(q)*23,Math.sin(q)*23);ctx.stroke()}}
+  else if(e.type==='corrupted-rat'){ctx.fillStyle='#d52d86';ctx.beginPath();ctx.ellipse(0,2,15,9,0,0,7);ctx.fill();ctx.fillStyle='#f98bc2';ctx.fillRect(8,-5,8,7)}
+  else if(e.type==='corrupted-unicorn'){ctx.fillStyle='#ad3a93';ctx.fillRect(-17,-10,34,23);ctx.fillStyle='#f2a5dc';ctx.beginPath();ctx.moveTo(13,-10);ctx.lineTo(25,-23);ctx.lineTo(19,-7);ctx.fill()}
+  else if(e.type==='corrupted-dragon'){ctx.fillStyle='#7f1e72';ctx.beginPath();ctx.moveTo(-21,12);ctx.lineTo(-14,-16);ctx.lineTo(0,-8);ctx.lineTo(15,-20);ctx.lineTo(22,13);ctx.closePath();ctx.fill();ctx.fillStyle='#ff58b8';ctx.fillRect(9,-13,6,4)}
+  else {ctx.fillStyle='#441047';ctx.beginPath();ctx.arc(0,0,27,0,7);ctx.fill();ctx.strokeStyle='#ff5fbf';ctx.lineWidth=5;for(let a=0;a<6;a++){const q=a*Math.PI/3;ctx.beginPath();ctx.moveTo(Math.cos(q)*20,Math.sin(q)*20);ctx.lineTo(Math.cos(q)*34,Math.sin(q)*34);ctx.stroke()}ctx.fillStyle='#f6a1db';ctx.fillRect(-12,-6,8,6);ctx.fillRect(4,-6,8,6)}
+  ctx.fillStyle='#360b0b';ctx.fillRect(-14,-e.r-8,28,4);ctx.fillStyle='#b52b35';ctx.fillRect(-14,-e.r-8,28*Math.max(0,e.hp/e.maxHp),4);ctx.restore()
+}
+
 
 async function openLeaderboard() {
   $('leaderboard').textContent = 'Loading...';
@@ -1247,6 +1311,8 @@ $('openSlayer').onclick = openSlayer;
 $('openCombat').onclick = openCombat;
 document.querySelectorAll('.combat-weapon-choice').forEach(button => button.addEventListener('click', () => selectCombatWeapon(button.dataset.weapon)));
 document.querySelectorAll('.combat-difficulty-choice').forEach(button => button.addEventListener('click', () => selectCombatDifficulty(button.dataset.difficulty)));
+document.querySelectorAll('.combat-location-choice').forEach(button => button.addEventListener('click', () => selectCombatLocation(button.dataset.location)));
+document.querySelectorAll('.slayer-difficulty-choice').forEach(button => button.addEventListener('click', () => selectSlayerDifficulty(button.dataset.slayerDifficulty)));
 $('combatStart').onclick = startCombatGame;
 $('openSailing').onclick = openSailingGame;
 $('openRunecrafting').onclick = openRunecrafting;
