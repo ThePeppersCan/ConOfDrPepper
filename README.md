@@ -1,12 +1,12 @@
-# Dr Pepper Crack Counter
+# Repo Company clan website
 
-Open `index.html` in a browser and click the can to increase the tally.
+This package is the complete rebranded site. The old Dr Pepper and Connor-facing theme has been removed from the interface and minigames.
 
-## Persistence
-The included version saves the tally in the browser using `localStorage`. It survives refreshes and browser restarts on the same device.
+## Upload
+Upload everything in this folder to GitHub Pages, replacing the existing site files. Then hard-refresh with Ctrl + F5.
 
-## Put it online free
-Drag the folder into Netlify Drop, or upload it to GitHub Pages.
+## Supabase
+No new SQL is required for this visual/theme update. Existing accounts and progress are preserved. The internal authentication email domain and legacy collection IDs are intentionally retained so old accounts and saved collection logs continue to work.
 
-## Important: one shared counter across multiple phones/computers
-A static website cannot share the same total between devices by itself. For a true shared tally, connect the buttons to a small database such as Supabase or Firebase. The current version is deliberately dependency-free and works immediately.
+
+NEW: Run update-combat-difficulties-runecrafting-pool.sql in Supabase before using Combat difficulty rewards or Rune Pool multiplayer.

@@ -1,57 +1,250 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#5a0018" />
-  <title>Dr Pepper Detected</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Repo Company</title>
+  <link rel="stylesheet" href="style.css?v=repo-runepool-potted-1">
 </head>
 <body>
-  <div class="noise"></div>
-
-  <main class="app">
-    <div class="badge">LIVE PEPPER SURVEILLANCE</div>
-    <h1>DR PEPPER<br><span>CRACK COUNTER</span></h1>
-    <p class="subtitle">Every time the can goes <strong>psssht</strong>, slap the can.</p>
-
-    <section class="counter-card" aria-live="polite">
-      <div class="label">CANS CRACKED</div>
-      <div id="count" class="count">0</div>
-      <div id="status" class="status">No suspicious activity yet.</div>
-    </section>
-
-    <button id="canButton" class="can-button" aria-label="Add one Dr Pepper can">
-      <span class="shine"></span>
-      <span class="rim top"></span>
-      <span class="can-logo">Dr<br><strong>Pepper</strong></span>
-      <span class="since">EST. 1885-ish</span>
-      <span class="rim bottom"></span>
-      <span class="plus">+1</span>
+<header>
+  <div>
+    <div class="logo">REPO <span>COMPANY</span></div>
+    <div class="tag">The clan hub for questionable decisions and wasted XP.</div>
+  </div>
+  <div id="characterBox" class="character-box">
+    <button id="createCharacter" class="character-button">LOG IN / CREATE ACCOUNT</button>
+    <button id="characterSummary" class="character-summary hidden" type="button">
+      <b id="characterName">Adventurer</b><span>Total level <strong id="totalLevel">3</strong></span>
     </button>
+  </div>
+</header>
 
-    <div class="actions">
-      <button id="undoButton" class="small-button">Undo last can</button>
-      <button id="resetButton" class="small-button danger">Reset tally</button>
+<main>
+  <section class="card stats">
+    <h2>XP CLICKS WASTED</h2>
+    <div id="count">0</div>
+    <p id="status">The XP waste has only just begun.</p>
+    <div class="bar"><i id="fill"></i></div>
+    <div class="row"><span>Waste goal</span><b id="percent">0.00%</b></div>
+    <ul><li>1,000 — Bankstanding enthusiast</li><li>5,000 — Productivity abandoned</li><li>10,000 — Serious XP negligence</li><li>25,000 — Grandmaster of wasted time</li></ul>
+  </section>
+
+  <section id="scene" class="scene">
+    <div class="poster p1">OLD SCHOOL</div><div class="poster p2">REPO COMPANY</div>
+    <div class="monitor"><div class="screen"><div class="minimap"></div><div class="player"></div><div class="chat">Another perfectly good XP tick wasted...</div></div><div class="stand"></div></div>
+    <div class="desk"></div><div class="keyboard"></div><div class="chair"><div class="back"></div><div class="seat"></div><div class="base"></div></div>
+    <div id="gamer" class="gamer"><div class="hairback"></div><div class="head"><div class="ear"></div><div class="nose"></div></div><div class="curls"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="neck"></div><div class="body"></div><div class="belly"></div><div class="arm"><div class="hand"></div></div><div class="leg one"></div><div class="leg two"></div></div>
+    <div id="level" class="level">WASTE RANK: BEGINNER</div>
+    <div id="resourceLayer" class="resource-layer" aria-live="polite"></div>
+  </section>
+
+  <section class="card actions">
+    <h2>WASTE ANOTHER XP CLICK</h2>
+    <button id="can" class="xp-waste-button" aria-label="Waste one XP click"><span class="xp-runes">XP</span><span class="xp-spark">✦</span><strong>WASTE<br>1 CLICK</strong><em>+1 TO THE SHARED TALLY</em></button>
+    <button id="undo">UNDO (-1 CLICK)</button><button id="reset" class="danger">RESET ALL</button>
+    <small>Shared live between everyone using the website.</small>
+  </section>
+</main>
+
+<section class="game-strip">
+  <div><b>RANDOM SKILLING EVENTS</b><span>Rare trees, rocks and sharks can appear while you are on the site. Create a character to collect them.</span></div>
+  <button id="openAgility" class="agility-open-button" disabled><img src="assets/agility-icon.webp" alt="" width="24" height="24" style="width:24px;height:24px;max-width:24px;max-height:24px;object-fit:contain;display:block;flex:0 0 24px">LEVEL AGILITY</button>
+  <button id="openSlayer" class="slayer-open-button" disabled><img src="assets/slayer-icon.png" alt="" width="24" height="24">LEVEL SLAYER</button>
+  <button id="openCombat" class="combat-open-button" disabled><span aria-hidden="true">⚔</span>LEVEL COMBAT</button>
+  <button id="openSailing" class="sailing-open-button" disabled><img src="assets/sailing-icon.webp" alt="" width="24" height="24">LEVEL SAILING</button>
+  <button id="openRunecrafting" class="runecrafting-open-button" disabled><img src="assets/runecrafting-icon.png" alt="" width="24" height="24">LEVEL RUNECRAFTING</button>
+  <button id="openSkills" disabled>SKILLS &amp; LOG</button>
+  <button id="openLeaderboard">LEADERBOARD</button>
+</section>
+
+<footer><b>ABOUT REPO COMPANY</b><span>A shared clan hub for tracking wasted XP, competing on leaderboards and playing RuneScape-inspired minigames.</span></footer>
+
+<div id="toast" class="toast" role="status"></div>
+
+<dialog id="dialog"><h3>Reset all wasted XP clicks?</h3><p>This resets the shared tally for everyone.</p><form method="dialog"><button value="cancel">Cancel</button><button id="confirm" value="confirm" class="danger">Reset tally</button></form></dialog>
+
+<dialog id="characterDialog" class="game-dialog">
+  <button class="dialog-x" data-close="characterDialog" aria-label="Close">×</button>
+  <h3 id="characterDialogTitle">ACCOUNT</h3>
+  <p>Use a username and password. No email address is required.</p>
+  <div class="auth-tabs">
+    <button id="showLogin" type="button" class="active">LOG IN</button>
+    <button id="showRegister" type="button">CREATE ACCOUNT</button>
+  </div>
+  <form id="characterForm">
+    <label for="username">Username</label>
+    <input id="username" maxlength="16" autocomplete="username" placeholder="3–16 letters, numbers, _ or -" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" minlength="8" maxlength="72" autocomplete="current-password" placeholder="At least 8 characters" required>
+    <small id="characterError"></small>
+    <button id="authSubmit" type="submit">LOG IN</button>
+  </form>
+</dialog>
+
+<dialog id="skillsDialog" class="game-dialog wide">
+  <button class="dialog-x" data-close="skillsDialog" aria-label="Close">×</button>
+  <h3 id="skillsTitle">CHARACTER</h3>
+  <div id="skillsGrid" class="skills-grid"></div>
+  <h4>COLLECTION LOG</h4>
+  <div id="collectionGrid" class="collection-grid"></div>
+  <button id="changeCharacter" class="change-character" type="button">LOG OUT</button>
+</dialog>
+
+<dialog id="agilityDialog" class="game-dialog agility-dialog">
+  <button class="dialog-x" data-close="agilityDialog" aria-label="Close">×</button>
+  <h3>REPO XP RUSH</h3>
+  <p>Race across the arena and collect 15 glowing XP drops. The faster you collect them, the more Agility XP you earn.</p>
+  <div class="agility-stats">
+    <span>Target <b id="agilityProgress">0 / 15</b></span>
+    <span>Time <b id="agilityTime">0.00s</b></span>
+    <span>Best reaction <b id="agilityBest">—</b></span>
+  </div>
+  <div id="agilityArena" class="agility-arena">
+    <div id="agilityRunner" class="agility-runner" aria-hidden="true">
+      <div class="hairback"></div><div class="head"><div class="ear"></div><div class="nose"></div></div><div class="curls"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="neck"></div><div class="body"></div><div class="belly"></div><div class="arm"><div class="hand"></div></div><div class="leg one"></div><div class="leg two"></div>
     </div>
+    <button id="agilityStart" type="button">START DASH</button>
+  </div>
+  <small id="agilityMessage" class="agility-message">Collect all 15 XP drops to receive XP.</small>
+  <section class="dash-leaderboard-section">
+    <h4>FASTEST DASHES</h4>
+    <div id="agilityLeaderboard" class="leaderboard compact">Loading...</div>
+  </section>
+</dialog>
 
-    <p class="footnote">The counter is saved automatically on this device.</p>
-  </main>
+<dialog id="slayerDialog" class="game-dialog slayer-dialog">
+  <button class="dialog-x" data-close="slayerDialog" aria-label="Close">×</button>
+  <h3>JAD PRAYER-SWAP SIMULATOR</h3>
+  <p>Watch Jad's attack cue and switch to the correct protection prayer before it lands. Defeat his full health bar to earn Slayer XP.</p>
+  <div class="jad-status-row">
+    <span>Jad health <b id="jadHealthText">100%</b></span>
+    <span>Hits blocked <b id="jadBlocks">0 / 12</b></span>
+  </div>
+  <div class="jad-health"><i id="jadHealthFill"></i></div>
+  <div id="jadArena" class="jad-arena">
+    <div id="jadBoss" class="jad-boss" aria-label="TzTok-Jad simulator">
+      <div class="jad-horns"><i></i><i></i></div>
+      <div class="jad-head"><i class="jad-eye one"></i><i class="jad-eye two"></i></div>
+      <div class="jad-body"></div><div class="jad-leg one"></div><div class="jad-leg two"></div>
+      <div id="jadProjectile" class="jad-projectile"></div>
+    </div>
+    <div id="jadCue" class="jad-cue">Press START FIGHT</div>
+    <button id="jadStart" type="button">START FIGHT</button>
+  </div>
+  <div class="prayer-controls" aria-label="Protection prayers">
+    <button id="prayRanged" class="prayer-button ranged" type="button"><span class="prayer-symbol">➶</span><b>PROTECT FROM RANGED</b><small>Use when Jad stomps</small></button>
+    <button id="prayMagic" class="prayer-button magic" type="button"><span class="prayer-symbol">✦</span><b>PROTECT FROM MAGIC</b><small>Use when Jad raises up</small></button>
+  </div>
+  <small id="jadMessage" class="jad-message">One wrong prayer ends the attempt.</small>
+</dialog>
 
-  <dialog id="resetDialog">
-    <form method="dialog">
-      <h2>Reset the sacred tally?</h2>
-      <p>This wipes the counter on this device.</p>
-      <div class="dialog-actions">
-        <button value="cancel" class="small-button">Cancel</button>
-        <button id="confirmReset" value="confirm" class="small-button danger">Reset it</button>
+
+<dialog id="combatDialog" class="game-dialog combat-dialog">
+  <button class="dialog-x" data-close="combatDialog" aria-label="Close">×</button>
+  <h3>REPO COMBAT SURVIVAL</h3>
+  <p>Survive for 60 seconds. Move with WASD or the arrow keys while your RuneScape adventurer automatically attacks nearby goblins, cows and skeletons.</p>
+  <div class="combat-hud">
+    <span>Time <b id="combatTime">60</b></span>
+    <span>Health <b id="combatHealth">100 / 100</b></span>
+    <span>Kills <b id="combatKills">0</b></span>
+    <span>Run level <b id="combatLevel">1</b></span>
+  </div>
+  <div class="combat-xp-bar"><i id="combatXpFill"></i></div>
+  <div id="combatArena" class="combat-arena">
+    <canvas id="combatCanvas" width="760" height="430" aria-label="Combat survival game"></canvas>
+    <div id="combatIntro" class="combat-overlay">
+      <b>CHOOSE YOUR WEAPON</b>
+      <span>Each weapon has a completely different play style.</span>
+      <div class="combat-weapon-grid" aria-label="Choose a starting weapon">
+        <button type="button" class="combat-weapon-choice selected" data-weapon="sword" aria-pressed="true"><strong>⚔️ Rune Sword</strong><small>Heavy close-range cleaves</small></button>
+        <button type="button" class="combat-weapon-choice" data-weapon="bow" aria-pressed="false"><strong>🏹 Maple Bow</strong><small>Very fast, long-range shots</small></button>
+        <button type="button" class="combat-weapon-choice" data-weapon="staff" aria-pressed="false"><strong>🪄 Air Staff</strong><small>Magic chains between enemies</small></button>
       </div>
-    </form>
-  </dialog>
+      <b class="combat-option-title">CHOOSE DIFFICULTY</b>
+      <div class="combat-difficulty-grid" aria-label="Choose combat difficulty">
+        <button type="button" class="combat-difficulty-choice" data-difficulty="easy" aria-pressed="false"><strong>EASY</strong><small>Slower enemies · 75% XP</small></button>
+        <button type="button" class="combat-difficulty-choice selected" data-difficulty="medium" aria-pressed="true"><strong>MEDIUM</strong><small>Original difficulty · 100% XP</small></button>
+        <button type="button" class="combat-difficulty-choice" data-difficulty="hard" aria-pressed="false"><strong>HARD</strong><small>Relentless enemies · 140% XP</small></button>
+      </div>
+      <button id="combatStart" type="button">START RUN</button>
+    </div>
+    <div id="combatUpgrade" class="combat-overlay hidden">
+      <b>CHOOSE AN UPGRADE</b>
+      <div id="combatUpgradeChoices" class="combat-upgrades"></div>
+    </div>
+  </div>
+  <div class="combat-touch" aria-label="Touch movement controls">
+    <button type="button" data-move="up">▲</button>
+    <button type="button" data-move="left">◀</button>
+    <button type="button" data-move="down">▼</button>
+    <button type="button" data-move="right">▶</button>
+  </div>
+  <small id="combatMessage" class="combat-message">Complete the minute for the best Attack, Strength and Defence XP reward.</small>
+</dialog>
 
-  <script src="script.js"></script>
+
+<dialog id="sailingDialog" class="game-dialog sailing-dialog">
+  <button class="dialog-x" data-close="sailingDialog" aria-label="Close">×</button>
+  <h3>REPO COMPANY: HIGH SEAS</h3>
+  <p>A one-button, Geometry Dash-style Sailing run. Jump the boat over rocks, wrecks and sea spikes, collect rings and survive the full minute.</p>
+  <div class="sailing-hud">
+    <span>Time <b id="sailingTime">60</b></span><span>Lives <b id="sailingHull">1</b></span><span>Score <b id="sailingScore">0</b></span><span>Combo <b id="sailingCombo">x1</b></span>
+  </div>
+  <div id="sailingArena" class="sailing-arena">
+    <canvas id="sailingCanvas" width="760" height="430" aria-label="Repo Company rhythm sailing game"></canvas>
+    <div id="sailingIntro" class="sailing-overlay">
+      <b>ONE BUTTON. ONE MINUTE. DO NOT CRASH.</b>
+      <span>Press SPACE, W, ↑ or click/tap the sea to jump. Hold slightly longer for a higher leap. Collect golden rings and chain perfect landings.</span>
+      <button id="sailingStart" type="button">START GLIDE</button>
+    </div>
+  </div>
+  <div class="sailing-touch"><button type="button" data-sail="jump">▲ JUMP ▲</button></div>
+  <small id="sailingMessage" class="sailing-message">Survive the minute to bank the biggest Sailing XP reward.</small>
+</dialog>
+
+
+<dialog id="runecraftingDialog" class="game-dialog runecrafting-dialog">
+  <button class="dialog-x" data-close="runecraftingDialog" aria-label="Close">×</button>
+  <h3>RUNECRAFTING POOL</h3>
+  <p>Classic two-player pool: red Fire runes versus yellow Chaos runes. Clear your seven runes, then pot the black Wrath rune to win.</p>
+  <div id="rcLobby" class="rc-lobby">
+    <div class="rc-lobby-actions">
+      <button id="rcCreateRoom" type="button">CREATE MATCH</button>
+      <div><label for="rcRoomCode">Room code</label><input id="rcRoomCode" maxlength="6" autocomplete="off" placeholder="ABC123"><button id="rcJoinRoom" type="button">JOIN MATCH</button></div>
+    </div>
+    <small id="rcLobbyMessage">Both players must be logged into a Repo Company account.</small>
+  </div>
+  <div id="rcGame" class="hidden">
+    <div class="rc-hud"><span>Room <b id="rcCodeLabel">—</b></span><span>You <b id="rcPlayerLabel">—</b></span><span>Turn <b id="rcTurnLabel">—</b></span><span>Colour <b id="rcSetLabel">Unassigned</b></span></div>
+    <canvas id="rcCanvas" width="760" height="430" aria-label="Two-player Runecrafting rune pool table"></canvas>
+    <div class="rc-potted" aria-live="polite">
+      <div><b>POTTED FIRE RUNES</b><div id="rcPottedFire" class="rc-potted-tray"></div></div>
+      <div><b>POTTED CHAOS RUNES</b><div id="rcPottedChaos" class="rc-potted-tray"></div></div>
+      <div><b>WRATH RUNE</b><div id="rcPottedWrath" class="rc-potted-tray"></div></div>
+    </div>
+    <div class="rc-power"><label for="rcPower">Shot power</label><input id="rcPower" type="range" min="20" max="100" value="65"><span>Drag backwards from the white Essence ball and release to shoot.</span></div>
+    <div class="rc-controls"><button id="rcLeaveRoom" type="button">LEAVE MATCH</button><button id="rcRematch" type="button" class="hidden">REMATCH</button></div>
+    <small id="rcMessage" class="rc-message">Waiting for another player…</small>
+    <div class="rc-legend"><span><img src="assets/fire-rune.webp" alt=""> Red · Fire</span><span><img src="assets/chaos-rune.png" alt=""> Yellow · Chaos</span><span><img src="assets/wrath-rune.png" alt=""> Black · Wrath</span></div>
+    <audio id="rcMusic" src="assets/guardians-of-the-rift.mp3" loop preload="auto"></audio>
+  </div>
+</dialog>
+
+<dialog id="leaderboardDialog" class="game-dialog wide">
+  <button class="dialog-x" data-close="leaderboardDialog" aria-label="Close">×</button>
+  <h3>OVERALL LEADERBOARD</h3>
+  <p class="leaderboard-help">Click a username to view their stats.</p>
+  <div id="leaderboard" class="leaderboard">Loading...</div>
+</dialog>
+
+<dialog id="playerStatsDialog" class="game-dialog wide">
+  <button class="dialog-x" data-close="playerStatsDialog" aria-label="Close">×</button>
+  <h3 id="playerStatsTitle">PLAYER STATS</h3>
+  <div id="playerStatsBody">Loading...</div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="script.js?v=repo-runepool-potted-1"></script>
 </body>
 </html>
