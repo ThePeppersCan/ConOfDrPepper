@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#5a0018" />
+  <title>Dr Pepper Detected</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="noise"></div>
+
+  <main class="app">
+    <div class="badge">LIVE PEPPER SURVEILLANCE</div>
+    <h1>DR PEPPER<br><span>CRACK COUNTER</span></h1>
+    <p class="subtitle">Every time the can goes <strong>psssht</strong>, slap the can.</p>
+
+    <section class="counter-card" aria-live="polite">
+      <div class="label">CANS CRACKED</div>
+      <div id="count" class="count">0</div>
+      <div id="status" class="status">No suspicious activity yet.</div>
+    </section>
+
+    <button id="canButton" class="can-button" aria-label="Add one Dr Pepper can">
+      <span class="shine"></span>
+      <span class="rim top"></span>
+      <span class="can-logo">Dr<br><strong>Pepper</strong></span>
+      <span class="since">EST. 1885-ish</span>
+      <span class="rim bottom"></span>
+      <span class="plus">+1</span>
+    </button>
+
+    <div class="actions">
+      <button id="undoButton" class="small-button">Undo last can</button>
+      <button id="resetButton" class="small-button danger">Reset tally</button>
+    </div>
+
+    <p class="footnote">The counter is saved automatically on this device.</p>
+  </main>
+
+  <dialog id="resetDialog">
+    <form method="dialog">
+      <h2>Reset the sacred tally?</h2>
+      <p>This wipes the counter on this device.</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="small-button">Cancel</button>
+        <button id="confirmReset" value="confirm" class="small-button danger">Reset it</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="script.js"></script>
+</body>
+</html>
