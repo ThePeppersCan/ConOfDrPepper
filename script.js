@@ -1,6 +1,5 @@
 const SUPABASE_URL = 'https://hvdrwmjieguurxvrgzfu.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_bln84LaJ8iYmnkYK9mh0Pg_XxP7O1OZ';
-const MAX = 25000;
 const $ = (id) => document.getElementById(id);
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -16,6 +15,9 @@ let agilityStartedAt = 0;
 let agilityShownAt = 0;
 let agilityReactions = [];
 let agilityClock = null;
+let agilityMode = 'dash';
+let gnomeBallRunning = false, gnomeBallFrame = null, gnomeBallLast = 0, gnomeBallState = null;
+let gnomeBallSaving = false;
 let jadRunning = false;
 let jadAttackTimer = null;
 let jadResolveTimer = null;
@@ -32,6 +34,8 @@ const combatKeys = new Set();
 let selectedCombatWeapon = 'sword';
 let selectedCombatDifficulty = 'medium';
 let selectedCombatLocation = 'lumbridge';
+let selectedRcAiDifficulty = 'medium';
+let rcAiTimer = null;
 let selectedSlayerDifficulty = 'medium';
 let rcRoom = null, rcPollTimer = null, rcAnimating = false, rcAim = null;
 const rcRuneImages = {};
@@ -178,9 +182,19 @@ function level(v) {
   if (v < 1000) return ['BEGINNER', 'The XP waste has only just begun.'];
   if (v < 5000) return ['BANKSTANDER', 'Useful clicks are becoming increasingly rare.'];
   if (v < 10000) return ['TIME WASTER', 'Serious XP negligence detected.'];
-  if (v < 18000) return ['XP SABOTEUR', 'Thousands of efficient ticks have been sacrificed.'];
-  if (v < MAX) return ['REPO VETERAN', 'The clan tally is approaching legendary waste.'];
-  return ['WASTE MASTER', 'Maximum XP waste has been achieved.'];
+  if (v < 25000) return ['XP SABOTEUR', 'Thousands of efficient ticks have been sacrificed.'];
+  if (v < 50000) return ['REPO VETERAN', 'The clan tally has entered legendary territory.'];
+  if (v < 100000) return ['WASTE MASTER', 'Efficiency is now only a distant memory.'];
+  return ['ETERNAL BANKSTANDER', 'There is no limit. The XP waste continues forever.'];
+}
+
+function nextWasteMilestone(v) {
+  const milestones = [1000, 5000, 10000, 25000, 50000, 100000];
+  const next = milestones.find((milestone) => v < milestone);
+  if (!next) return { start: 100000, next: null, progress: 1 };
+  const index = milestones.indexOf(next);
+  const start = index === 0 ? 0 : milestones[index - 1];
+  return { start, next, progress: Math.max(0, Math.min(1, (v - start) / (next - start))) };
 }
 
 function xpForLevel(level) {
@@ -195,12 +209,12 @@ function levelFromXp(xp) {
 }
 
 function render() {
-  const progress = Math.min(count, MAX) / MAX;
   const [name, text] = level(count);
+  const milestone = nextWasteMilestone(count);
   $('count').textContent = count.toLocaleString('en-GB');
   $('status').textContent = text;
-  $('percent').textContent = `${(progress * 100).toFixed(2)}%`;
-  $('fill').style.width = `${progress * 100}%`;
+  $('percent').textContent = milestone.next ? `${milestone.next.toLocaleString('en-GB')} next` : 'NO LIMIT';
+  $('fill').style.width = `${milestone.progress * 100}%`;
   $('level').textContent = `WASTE RANK: ${name}`;
   $('gamer').style.setProperty('--fat', '0');
 }
@@ -252,6 +266,10 @@ function renderCharacter() {
   $('openCombat').disabled = !hasCharacter;
   $('openSailing').disabled = !hasCharacter;
   $('openRunecrafting').disabled = !hasCharacter;
+  $('openBank').disabled = false;
+  $('openGrandExchange').disabled = false;
+  // Keep the Wise Old Man button clickable so it cannot get stuck greyed out.
+  $('openWiseTask').disabled = false;
   if (!hasCharacter) {
     $('createCharacter').textContent = 'LOG IN / CREATE ACCOUNT';
     return;
@@ -260,6 +278,7 @@ function renderCharacter() {
   const total = levelFromXp(character.woodcutting_xp) + levelFromXp(character.mining_xp) + levelFromXp(character.fishing_xp) + levelFromXp(character.agility_xp || 0) + levelFromXp(character.slayer_xp || 0) + levelFromXp(character.attack_xp || 0) + levelFromXp(character.strength_xp || 0) + levelFromXp(character.defence_xp || 0) + levelFromXp(character.sailing_xp || 0) + levelFromXp(character.runecrafting_xp || 0);
   $('characterName').textContent = character.username;
   $('totalLevel').textContent = total;
+  queueWiseTaskCheck();
 }
 
 function usernameToEmail(username) {
@@ -442,6 +461,200 @@ function openSkills() {
   $('skillsDialog').showModal();
 }
 
+
+
+function setAgilityMode(mode) {
+  agilityMode = mode;
+  const dash = mode === 'dash';
+  $('dashGamePanel').classList.toggle('hidden', !dash);
+  $('gnomeBallPanel').classList.toggle('hidden', dash);
+  $('chooseDash').classList.toggle('selected', dash);
+  $('chooseGnomeBall').classList.toggle('selected', !dash);
+  if (dash) {
+    stopGnomeBall(false);
+    loadAgilityLeaderboard();
+  } else {
+    resetAgilityGame();
+    resetGnomeBall();
+    loadGnomeBallLeaderboard();
+  }
+}
+
+const gnomeBallMusic = new Audio('assets/gnomeball-theme.mp3');
+gnomeBallMusic.loop = true;
+gnomeBallMusic.preload = 'auto';
+gnomeBallMusic.volume = 0;
+let gnomeBallMusicFade = null;
+function fadeGnomeBallMusic(target, duration=450, resetAfter=false){
+  clearInterval(gnomeBallMusicFade);
+  const start=gnomeBallMusic.volume,steps=Math.max(1,Math.round(duration/30));let n=0;
+  gnomeBallMusicFade=setInterval(()=>{n++;gnomeBallMusic.volume=start+(target-start)*(n/steps);if(n>=steps){clearInterval(gnomeBallMusicFade);gnomeBallMusic.volume=target;if(resetAfter){gnomeBallMusic.pause();try{gnomeBallMusic.currentTime=0}catch(_){}}}},30);
+}
+function startGnomeBallMusic(){
+  clearInterval(gnomeBallMusicFade);
+  try{gnomeBallMusic.pause();gnomeBallMusic.currentTime=0;gnomeBallMusic.volume=0}catch(_){}
+  const play=gnomeBallMusic.play();
+  if(play?.then)play.then(()=>fadeGnomeBallMusic(.65,600)).catch(()=>{});
+}
+function stopGnomeBallMusic(immediate=false){
+  clearInterval(gnomeBallMusicFade);
+  if(immediate){gnomeBallMusic.pause();try{gnomeBallMusic.currentTime=0}catch(_){}gnomeBallMusic.volume=0;return;}
+  if(gnomeBallMusic.paused){try{gnomeBallMusic.currentTime=0}catch(_){}gnomeBallMusic.volume=0;return;}
+  fadeGnomeBallMusic(0,400,true);
+}
+
+function resetGnomeBall(message = 'Drag the Gnome Ball down, then release to throw it upwards through the hoop.') {
+  stopGnomeBall(false);
+  gnomeBallState = makeGnomeBallState();
+  $('gnomeBallStart').classList.remove('hidden');
+  $('gnomeBallStart').textContent = 'START GNOME BALL';
+  $('gnomeBallMessage').textContent = message;
+  updateGnomeBallHud();
+  drawGnomeBall();
+}
+
+function makeGnomeBallState() {
+  return {
+    ball:{x:380,y:365,r:20,vx:0,vy:0,held:false,flying:false,scored:false},
+    start:{x:380,y:365}, pointer:{x:380,y:365},
+    hoop:{x:315,y:110,w:130,vx:0},
+    streak:0,best:0,savedBest:0,lives:3,level:1,gravity:560,lastShotAt:0,settle:0
+  };
+}
+
+function startGnomeBall() {
+  if (!character || gnomeBallRunning) return;
+  if (!gnomeBallState || gnomeBallState.lives <= 0) gnomeBallState = makeGnomeBallState();
+  gnomeBallRunning = true;
+  startGnomeBallMusic();
+  gnomeBallLast = performance.now();
+  $('gnomeBallStart').classList.add('hidden');
+  $('gnomeBallMessage').textContent = 'Pull the ball down and release — throw it straight up through the hoop!';
+  gnomeBallFrame = requestAnimationFrame(gnomeBallLoop);
+}
+
+function stopGnomeBall(showButton = true) {
+  stopGnomeBallMusic(true);
+  gnomeBallRunning = false;
+  cancelAnimationFrame(gnomeBallFrame);
+  gnomeBallFrame = null;
+  if (showButton && $('gnomeBallStart')) $('gnomeBallStart').classList.remove('hidden');
+}
+
+function gnomeBallLoop(now) {
+  if (!gnomeBallRunning || !gnomeBallState) return;
+  const dt = Math.min(.025, (now - gnomeBallLast) / 1000 || .016);
+  gnomeBallLast = now;
+  const s = gnomeBallState, b = s.ball, h = s.hoop;
+  // Starts stationary and generous. The hoop gradually narrows and moves faster.
+  h.w = Math.max(72, 130 - Math.max(0, s.streak - 3) * 3);
+  if (s.streak >= 5) {
+    const speed = 24 + Math.min(115, (s.streak - 5) * 4.5);
+    if (!h.vx) h.vx = speed;
+    h.x += h.vx * dt;
+    if (h.x < 55 || h.x + h.w > 705) {
+      h.vx *= -1;
+      h.x = Math.max(55, Math.min(705 - h.w, h.x));
+    }
+  } else {
+    h.vx = 0;
+    h.x = (760 - h.w) / 2;
+  }
+  if (b.flying) {
+    const oldY=b.y;
+    b.vy += s.gravity * dt; b.x += b.vx*dt; b.y += b.vy*dt;
+    b.vx *= Math.pow(.995,dt*60);
+    const rimY=h.y, left=h.x, right=h.x+h.w;
+    if (!b.scored && b.vy>0 && oldY < rimY && b.y >= rimY && b.x > left+4 && b.x < right-4) {
+      b.scored=true; s.streak++; s.best=Math.max(s.best,s.streak); s.level=1+Math.floor(s.streak/5);
+      $('gnomeBallMessage').textContent = s.streak % 5 === 0 ? `GNOME-TASTIC! ${s.streak} in a row — the hoop is getting faster!` : `${s.streak} in a row! Keep it going.`;
+      updateGnomeBallHud();
+    }
+    if (b.y > 455 || b.x < -40 || b.x > 800) {
+      if (!b.scored) {
+        stopGnomeBallMusic(false);
+        const endedStreak=s.streak;
+        s.lives--; s.streak=0;
+        $('gnomeBallMessage').textContent = endedStreak ? `Streak ${endedStreak} ended — saving score and stopping the music…` : (s.lives ? 'Miss! No streak to save — the music has stopped.' : 'Out of gnome balls!');
+        if(endedStreak>0) saveGnomeBallStreak(endedStreak,s.lives<=0);
+      }
+      b.flying=false; s.settle=.55; updateGnomeBallHud();
+    }
+  } else if (s.settle>0) {
+    s.settle-=dt;
+    if (s.settle<=0) {
+      if (s.lives<=0) finishGnomeBall(); else resetGnomeBallShot();
+    }
+  }
+  drawGnomeBall();
+  if (gnomeBallRunning) gnomeBallFrame=requestAnimationFrame(gnomeBallLoop);
+}
+
+function resetGnomeBallShot(){ const s=gnomeBallState,b=s.ball;b.x=s.start.x;b.y=s.start.y;b.vx=b.vy=0;b.held=b.flying=b.scored=false; }
+function updateGnomeBallHud(){const s=gnomeBallState||makeGnomeBallState();$('gnomeBallStreak').textContent=s.streak;$('gnomeBallBest').textContent=s.best;$('gnomeBallLevel').textContent=s.level;$('gnomeBallLives').textContent='● '.repeat(s.lives).trim()||'—';}
+
+async function saveGnomeBallStreak(streak,finalAttempt=false){
+  const s=gnomeBallState;
+  if(!s||streak<1||streak<=Number(s.savedBest||0)){
+    if(finalAttempt) finishGnomeBall();
+    return;
+  }
+  s.savedBest=streak;
+  gnomeBallSaving=true;
+  const {data,error}=await db.rpc('complete_gnome_ball',{p_streak:streak});
+  gnomeBallSaving=false;
+  if(error||!data?.[0]){
+    console.error(error);s.savedBest=0;
+    $('gnomeBallMessage').textContent='Could not save the Gnome Ball streak. Run update-gnome-ball.sql in Supabase.';
+    return;
+  }
+  const result=data[0],old=levelFromXp(character.agility_xp||0);
+  character.agility_xp=Number(result.new_xp);renderCharacter();loadGnomeBallLeaderboard();
+  const levelUp=levelFromXp(character.agility_xp)>old?' — Agility level up!':'';
+  const personal=result.is_personal_best?' — New leaderboard personal best!':'';
+  $('gnomeBallMessage').textContent=`Streak ${streak} saved! +${result.xp_gained} Agility XP${levelUp}${personal}`;
+  if(finalAttempt) setTimeout(finishGnomeBall,350);
+}
+
+async function finishGnomeBall(){
+  stopGnomeBall(false);const s=gnomeBallState,best=s.best;
+  $('gnomeBallStart').classList.remove('hidden');$('gnomeBallStart').textContent='PLAY AGAIN';
+  if(!best){$('gnomeBallMessage').textContent='No baskets this time — give it another throw!';return;}
+  if(best>Number(s.savedBest||0)){await saveGnomeBallStreak(best,false);}
+  $('gnomeBallMessage').textContent=`Attempt finished — best streak ${best}. Your leaderboard score is saved.`;
+  loadGnomeBallLeaderboard();
+}
+
+function gnomeBallPoint(e){const c=$('gnomeBallCanvas'),r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*c.width/r.width,y:(e.clientY-r.top)*c.height/r.height};}
+function gnomeBallDown(e){if(!gnomeBallRunning||!gnomeBallState||gnomeBallState.ball.flying)return;const p=gnomeBallPoint(e),b=gnomeBallState.ball;if(Math.hypot(p.x-b.x,p.y-b.y)<=42){e.preventDefault();b.held=true;gnomeBallState.pointer=p;$('gnomeBallCanvas').classList.add('aiming');$('gnomeBallCanvas').setPointerCapture?.(e.pointerId);}}
+function gnomeBallMove(e){if(!gnomeBallState?.ball.held)return;e.preventDefault();gnomeBallState.pointer=gnomeBallPoint(e);drawGnomeBall();}
+function gnomeBallUp(e){const s=gnomeBallState;if(!s?.ball.held)return;e.preventDefault();const p=gnomeBallPoint(e),b=s.ball;b.held=false;$('gnomeBallCanvas').classList.remove('aiming');const dx=b.x-p.x,dy=b.y-p.y,mag=Math.hypot(dx,dy);if(mag<16)return;const power=Math.min(820,Math.max(500,mag*4.5));const aimX=Math.max(-0.42,Math.min(0.42,dx/mag));b.vx=aimX*power;b.vy=-Math.sqrt(Math.max(0,1-aimX*aimX))*power;b.flying=true;b.scored=false;}
+
+function drawGnomeBall(){
+  const c=$('gnomeBallCanvas'); if(!c||!gnomeBallState)return; const x=c.getContext('2d'),s=gnomeBallState,b=s.ball,h=s.hoop;
+  x.clearRect(0,0,c.width,c.height);
+  const g=x.createLinearGradient(0,0,0,430);g.addColorStop(0,'#142d1b');g.addColorStop(.72,'#284c27');g.addColorStop(.73,'#8b6a35');g.addColorStop(1,'#33220e');x.fillStyle=g;x.fillRect(0,0,760,430);
+  x.fillStyle='#17371d';for(let i=0;i<14;i++){x.beginPath();x.arc(i*62+20,302+(i%3)*6,48,Math.PI,0);x.fill();}
+  x.fillStyle='#a98345';x.fillRect(0,302,760,7);x.fillStyle='#573d1b';for(let i=0;i<760;i+=38)x.fillRect(i,309,5,121);
+
+  // Backboard and vertically positioned hoop.
+  x.fillStyle='#d7cfad';x.fillRect(h.x-25,h.y-72,h.w+50,82);x.strokeStyle='#756a4e';x.lineWidth=4;x.strokeRect(h.x-25,h.y-72,h.w+50,82);
+  x.fillStyle='#5f4630';x.fillRect(h.x+h.w/2-7,h.y+50,14,74);
+  x.strokeStyle='#d9b34f';x.lineWidth=7;x.beginPath();x.ellipse(h.x+h.w/2,h.y,h.w/2,9,0,0,Math.PI*2);x.stroke();
+  x.strokeStyle='#ded7b8';x.lineWidth=2;for(let i=0;i<8;i++){const px=h.x+8+i*(h.w-16)/7;x.beginPath();x.moveTo(px,h.y+5);x.lineTo(h.x+h.w/2+(px-(h.x+h.w/2))*.55,h.y+58);x.stroke();}for(let yy=16;yy<58;yy+=11){x.beginPath();x.moveTo(h.x+12,h.y+yy);x.lineTo(h.x+h.w-12,h.y+yy);x.stroke();}
+
+  // Gnome spectators beside the court.
+  const gx=85; x.fillStyle='#bd3e2d';x.beginPath();x.moveTo(gx,278);x.lineTo(gx+40,278);x.lineTo(gx+20,218);x.fill();x.fillStyle='#f0c7a1';x.beginPath();x.arc(gx+20,292,20,0,Math.PI*2);x.fill();x.fillStyle='#35672f';x.fillRect(gx+2,310,37,54);
+  const gx2=625; x.fillStyle='#2d5fa7';x.beginPath();x.moveTo(gx2,278);x.lineTo(gx2+40,278);x.lineTo(gx2+20,218);x.fill();x.fillStyle='#efc49b';x.beginPath();x.arc(gx2+20,292,20,0,Math.PI*2);x.fill();x.fillStyle='#6b3c78';x.fillRect(gx2+2,310,37,54);
+
+  if(b.held){const p=s.pointer;x.strokeStyle='#f1d68a99';x.lineWidth=3;x.setLineDash([8,7]);x.beginPath();x.moveTo(b.x,b.y);x.lineTo(b.x+(b.x-p.x)*1.8,b.y+(b.y-p.y)*1.8);x.stroke();x.setLineDash([]);}
+  x.fillStyle='#9a5c28';x.beginPath();x.arc(b.x,b.y,b.r,0,Math.PI*2);x.fill();x.strokeStyle='#d0a05a';x.lineWidth=3;x.stroke();x.strokeStyle='#512a13';x.lineWidth=2;x.beginPath();x.arc(b.x,b.y,b.r*.64,-.8,2.3);x.stroke();x.beginPath();x.moveTo(b.x-b.r,b.y);x.lineTo(b.x+b.r,b.y);x.stroke();x.fillStyle='#f0d38d';x.font='bold 10px serif';x.textAlign='center';x.fillText('GNOME',b.x,b.y+4);
+  x.fillStyle='#f5e6b3';x.font='bold 16px serif';x.textAlign='left';x.fillText(s.streak>=5?'MOVING GNOME HOOP!':'GNOME BALL',18,28);
+  x.font='13px serif';x.fillStyle='#ead79a';x.fillText('Pull down • Release • Swish',18,49);
+}
+
+async function loadGnomeBallLeaderboard(){const board=$('gnomeBallLeaderboard');board.textContent='Loading...';const{data,error}=await db.rpc('get_gnome_ball_leaderboard');if(error){console.error(error);board.textContent='Run update-gnome-ball.sql to enable this leaderboard.';return;}if(!data?.length){board.textContent='No Gnome Ball streaks yet.';return;}board.innerHTML=data.map((r,i)=>`<div><b>${i+1}</b><button class="player-link" type="button" data-username="${escapeHtml(r.username)}">${escapeHtml(r.username)}</button><strong>${r.best_streak} streak</strong></div>`).join('');board.querySelectorAll('.player-link').forEach(b=>b.addEventListener('click',()=>openPlayerStats(b.dataset.username)));}
+
 function resetAgilityGame(message = 'Collect all 15 XP drops to receive XP.') {
   agilityRunning = false;
   clearInterval(agilityClock);
@@ -462,6 +675,8 @@ function resetAgilityGame(message = 'Collect all 15 XP drops to receive XP.') {
 function openAgility() {
   if (!character) return;
   resetAgilityGame();
+  resetGnomeBall();
+  setAgilityMode('dash');
   $('agilityDialog').showModal();
   loadAgilityLeaderboard();
 }
@@ -688,6 +903,13 @@ const COMBAT_WEAPONS = {
   staff: { name: 'Air Staff', icon: '🪄', description: 'Slow magic that chains to enemies', damage: 17, range: 170, attackRate: 0.72, colour: '#83d9ff' }
 };
 
+const COMBAT_DIFFICULTIES = {
+  easy:   { name: 'Easy', duration: 60,  spawn: .78, hp: .78, speed: .82, damage: .68, reward: .75, startHp: 110, description: 'Survive 1 minute' },
+  medium: { name: 'Medium', duration: 120, spawn: 1,   hp: 1,   speed: 1,   damage: 1,   reward: 1.10, startHp: 115, description: 'Survive 2 minutes' },
+  hard:   { name: 'Hard', duration: 180, spawn: 1.18,hp: 1.16,speed: 1.10,damage: 1.18,reward: 1.55, startHp: 125, description: 'Survive 3 minutes' },
+  insane: { name: 'INSANE', duration: 240, spawn: 1.52,hp: 1.42,speed: 1.25,damage: 1.48,reward: 2.35, startHp: 140, description: 'Survive 4 brutal minutes' }
+};
+
 function selectCombatWeapon(type) {
   if (!COMBAT_WEAPONS[type] || combatRunning) return;
   selectedCombatWeapon = type;
@@ -695,30 +917,32 @@ function selectCombatWeapon(type) {
     button.classList.toggle('selected', button.dataset.weapon === type);
     button.setAttribute('aria-pressed', button.dataset.weapon === type ? 'true' : 'false');
   });
-  $('combatMessage').textContent = `${COMBAT_WEAPONS[type].name} selected. Survive the minute to bank Combat XP.`;
+  const cfg = COMBAT_DIFFICULTIES[selectedCombatDifficulty];
+  $('combatMessage').textContent = `${COMBAT_WEAPONS[type].name} selected. ${cfg.description} to bank Combat XP.`;
 }
 
 function selectCombatDifficulty(type) {
-  if (!['easy','medium','hard'].includes(type) || combatRunning) return;
+  if (!COMBAT_DIFFICULTIES[type] || combatRunning) return;
   selectedCombatDifficulty = type;
   document.querySelectorAll('.combat-difficulty-choice').forEach(button => {
     const active = button.dataset.difficulty === type;
     button.classList.toggle('selected', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
-  const names={easy:'Easy',medium:'Medium',hard:'Hard'};
-  $('combatMessage').textContent = `${names[type]} selected. Choose a weapon and start the run.`;
+  const cfg = COMBAT_DIFFICULTIES[type];
+  $('combatTime').textContent = cfg.duration;
+  $('combatMessage').textContent = `${cfg.name} selected — ${cfg.description}. Choose a weapon and start the run.`;
 }
 
 function selectCombatLocation(type) {
-  if (!['lumbridge','fight-caves','gauntlet'].includes(type) || combatRunning) return;
+  if (!['lumbridge','fight-caves','gauntlet','inferno'].includes(type) || combatRunning) return;
   selectedCombatLocation = type;
   document.querySelectorAll('.combat-location-choice').forEach(button => {
     const active = button.dataset.location === type;
     button.classList.toggle('selected', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
-  const names = {lumbridge:'Lumbridge', 'fight-caves':'Fight Caves', gauntlet:'Corrupted Gauntlet'};
+  const names = {lumbridge:'Lumbridge', 'fight-caves':'Fight Caves', gauntlet:'Corrupted Gauntlet', inferno:'Inferno'};
   $('combatMessage').textContent = `${names[type]} selected. Choose a weapon and difficulty.`;
 }
 
@@ -728,7 +952,7 @@ function openCombat() {
   $('combatDialog').showModal();
 }
 
-function resetCombatGame(message = 'Complete the minute for the best Attack, Strength and Defence XP reward.') {
+function resetCombatGame(message = 'Choose a tier: Easy 1 minute, Medium 2 minutes, Hard 3 minutes, or INSANE 4 minutes.') {
   stopCombatMusic(250);
   combatRunning = false;
   combatPaused = false;
@@ -738,7 +962,7 @@ function resetCombatGame(message = 'Complete the minute for the best Attack, Str
   $('combatIntro').classList.remove('hidden');
   $('combatUpgrade').classList.add('hidden');
   $('combatStart').textContent = 'START RUN';
-  $('combatTime').textContent = '60';
+  $('combatTime').textContent = COMBAT_DIFFICULTIES[selectedCombatDifficulty].duration;
   $('combatHealth').textContent = '100 / 100';
   $('combatKills').textContent = '0';
   $('combatLevel').textContent = '1';
@@ -757,25 +981,31 @@ function startCombatGame() {
   startCombatMusic();
   const canvas = $('combatCanvas');
   const weapon = COMBAT_WEAPONS[selectedCombatWeapon];
+  const difficulty = COMBAT_DIFFICULTIES[selectedCombatDifficulty];
   combatState = {
     weapon: selectedCombatWeapon,
     difficulty: selectedCombatDifficulty,
     location: selectedCombatLocation,
-    player: { x: canvas.width / 2, y: canvas.height / 2, r: 15, hp: 100, maxHp: 100, speed: 185, damage: weapon.damage, range: weapon.range, attackRate: weapon.attackRate, lastAttack: 0, armour: 0 },
+    player: { x: canvas.width / 2, y: canvas.height / 2, r: 15, hp: difficulty.startHp, maxHp: difficulty.startHp, speed: 185, damage: weapon.damage, range: weapon.range, attackRate: weapon.attackRate, lastAttack: 0, armour: 0 },
     enemies: [], projectiles: [], slashes: [], chains: [], orbs: [], particles: [],
     kills: 0, damage: 0, runXp: 0, runLevel: 1, nextLevel: 8,
-    spawnClock: 0, elapsed: 0, ended: false
+    spawnClock: 0, elapsed: 0, ended: false,
+    inferno: selectedCombatLocation === 'inferno' ? { wallClock:2.6, walls:[], boss:null } : null
   };
-  const difficulty = { easy:{spawn:.72,hp:.78,speed:.82,damage:.70}, medium:{spawn:1,hp:1,speed:1,damage:1}, hard:{spawn:1.35,hp:1.28,speed:1.18,damage:1.35} }[selectedCombatDifficulty];
   combatState.difficultyConfig = difficulty;
+  if (combatState.inferno) {
+    const bossHp={easy:1100,medium:2300,hard:4200,insane:7600}[selectedCombatDifficulty];
+    combatState.inferno.boss={type:'inferno-boss',x:620,y:215,hp:bossHp,maxHp:bossHp,speed:0,damage:0,r:46,xp:20,hitCooldown:0};
+    combatState.enemies=[combatState.inferno.boss];
+  }
   combatRunning = true;
   combatPaused = false;
   combatStartedAt = performance.now();
   combatLast = combatStartedAt;
   $('combatIntro').classList.add('hidden');
   $('combatUpgrade').classList.add('hidden');
-  const locationName={lumbridge:'Lumbridge','fight-caves':'Fight Caves',gauntlet:'Corrupted Gauntlet'}[selectedCombatLocation];
-  $('combatMessage').textContent = `${weapon.name} equipped in ${locationName} — move, survive and auto-attack!`;
+  const locationName={lumbridge:'Lumbridge','fight-caves':'Fight Caves',gauntlet:'Corrupted Gauntlet',inferno:'Inferno'}[selectedCombatLocation];
+  $('combatMessage').textContent = selectedCombatLocation==='inferno' ? `${weapon.name} equipped — defeat the Inferno boss and pass through the fire-wall gaps!` : `${weapon.name} equipped in ${locationName} — move, survive and auto-attack!`;
   combatFrame = requestAnimationFrame(combatLoop);
 }
 
@@ -792,8 +1022,8 @@ function updateCombat(dt, now) {
   const s = combatState;
   const p = s.player;
   s.elapsed = (now - combatStartedAt) / 1000;
-  const remaining = Math.max(0, 60 - s.elapsed);
-  if (remaining <= 0) return finishCombat(true);
+  const remaining = Math.max(0, s.difficultyConfig.duration - s.elapsed);
+  if (remaining <= 0) return finishCombat(s.location !== 'inferno');
 
   let dx = 0, dy = 0;
   if (combatKeys.has('ArrowLeft') || combatKeys.has('a')) dx--;
@@ -805,19 +1035,22 @@ function updateCombat(dt, now) {
     p.x = Math.max(20, Math.min(740, p.x)); p.y = Math.max(24, Math.min(406, p.y));
   }
 
-  s.spawnClock -= dt;
-  if (s.spawnClock <= 0) {
-    spawnCombatEnemy();
-    s.spawnClock = Math.max(0.18, (0.75 - s.elapsed * 0.007) / s.difficultyConfig.spawn);
+  if (s.location === 'inferno') updateInfernoWalls(s, p, dt);
+  else {
+    s.spawnClock -= dt;
+    if (s.spawnClock <= 0) {
+      spawnCombatEnemy();
+      s.spawnClock = Math.max(s.difficulty === 'insane' ? 0.14 : 0.20, (0.78 - Math.min(s.elapsed, 150) * 0.0032) / s.difficultyConfig.spawn);
+    }
   }
 
   let nearest = null, nearestD = Infinity;
   for (const e of s.enemies) {
     const ex = p.x - e.x, ey = p.y - e.y, d = Math.hypot(ex, ey) || 1;
-    e.x += ex / d * e.speed * dt; e.y += ey / d * e.speed * dt;
+    if(e.type!=='inferno-boss'){e.x += ex / d * e.speed * dt; e.y += ey / d * e.speed * dt;}
     if (d < nearestD) { nearestD = d; nearest = e; }
     e.hitCooldown -= dt;
-    if (d < p.r + e.r + 2 && e.hitCooldown <= 0) {
+    if (e.type!=='inferno-boss' && d < p.r + e.r + 2 && e.hitCooldown <= 0) {
       p.hp -= Math.max(1, e.damage - p.armour); e.hitCooldown = 0.75;
       s.particles.push({x:p.x,y:p.y,text:`-${Math.max(1,e.damage-p.armour)}`,life:.7});
       if (p.hp <= 0) return finishCombat(false);
@@ -847,7 +1080,7 @@ function updateCombat(dt, now) {
   for (const orb of s.orbs) {
     const d = Math.hypot(p.x-orb.x,p.y-orb.y);
     if (d < 90) { orb.x += (p.x-orb.x) * dt * 5; orb.y += (p.y-orb.y) * dt * 5; }
-    if (d < p.r + 8) { orb.taken = true; s.runXp += orb.value; }
+    if (d < p.r + 8) { orb.taken = true; if (orb.heal) { p.hp = Math.min(p.maxHp, p.hp + orb.heal); s.particles.push({x:p.x,y:p.y,text:`+${orb.heal} HP`,life:.7}); } else s.runXp += orb.value; }
   }
   s.orbs = s.orbs.filter(o => !o.taken);
   s.slashes.forEach(x=>x.life-=dt); s.slashes=s.slashes.filter(x=>x.life>0);
@@ -860,9 +1093,37 @@ function updateCombat(dt, now) {
   }
   $('combatTime').textContent = Math.ceil(remaining);
   $('combatHealth').textContent = `${Math.max(0, Math.ceil(p.hp))} / ${p.maxHp}`;
-  $('combatKills').textContent = s.kills;
+  $('combatKills').textContent = s.location==='inferno' ? `${Math.max(0,Math.ceil(s.inferno.boss?.hp||0))} boss HP` : s.kills;
   $('combatLevel').textContent = s.runLevel;
   $('combatXpFill').style.width = `${Math.min(100, s.runXp / s.nextLevel * 100)}%`;
+}
+
+function updateInfernoWalls(s,p,dt){
+  const inf=s.inferno;if(!inf)return;
+  inf.wallClock-=dt;
+  if(inf.wallClock<=0){
+    const gapH={easy:150,medium:118,hard:92}[s.difficulty];
+    const gapY=70+Math.random()*(430-140);
+    const speed={easy:150,medium:190,hard:235}[s.difficulty];
+    inf.walls.push({x:790,gapY,gapH,speed,hit:false});
+    inf.wallClock={easy:4.8,medium:3.9,hard:3.15}[s.difficulty];
+    $('combatMessage').textContent='INFERNO WALL — move into the gap!';
+  }
+  for(const w of inf.walls){
+    w.x-=w.speed*dt;
+    if(!w.hit&&Math.abs(w.x-p.x)<18){
+      w.hit=true;
+      if(Math.abs(p.y-w.gapY)>w.gapH/2-p.r){
+        const hit={easy:18,medium:28,hard:40}[s.difficulty];
+        p.hp-=Math.max(1,hit-p.armour);s.particles.push({x:p.x,y:p.y,text:`-${hit}`,life:.8});
+        $('combatMessage').textContent='The Inferno wall burned you! Find the opening.';
+        if(p.hp<=0)return finishCombat(false);
+      }else{
+        s.runXp+=3;s.particles.push({x:p.x,y:p.y,text:'SAFE!',life:.7});
+      }
+    }
+  }
+  inf.walls=inf.walls.filter(w=>w.x>-35);
 }
 
 function spawnCombatEnemy() {
@@ -878,7 +1139,7 @@ function spawnCombatEnemy() {
   const table=tables[s.location]||tables.lumbridge;
   const picked=table.find(row=>roll<row[1])||table[table.length-1];
   const type=picked[0],stats=picked[2];
-  const timeScale=1+s.elapsed/95;
+  const timeScale=1+Math.min(s.elapsed,180)/180;
   const hpScale=timeScale*s.difficultyConfig.hp;
   s.enemies.push({type,x,y,hp:stats[0]*hpScale,maxHp:stats[0]*hpScale,speed:stats[1]*timeScale*s.difficultyConfig.speed,damage:stats[2]*s.difficultyConfig.damage,r:stats[3],xp:stats[4],hitCooldown:0});
 }
@@ -895,7 +1156,14 @@ function damageCombatEnemy(enemy, amount) {
 function killCombatEnemy(enemy) {
   const s=combatState; s.kills++;
   s.enemies.splice(s.enemies.indexOf(enemy),1);
+  if(enemy.type==='inferno-boss'){
+    s.damage += 250;
+    s.particles.push({x:enemy.x,y:enemy.y,text:'BOSS DEFEATED',life:1.2});
+    return finishCombat(true);
+  }
   s.orbs.push({x:enemy.x,y:enemy.y,value:enemy.xp,taken:false});
+  const foodChance = s.difficulty === 'insane' ? 0.075 : (s.difficulty === 'hard' ? 0.095 : 0.12);
+  if (Math.random() < foodChance) s.orbs.push({x:enemy.x+10,y:enemy.y-8,value:0,heal:s.difficulty==='insane'?12:16,taken:false});
   s.particles.push({x:enemy.x,y:enemy.y,text:'+XP',life:.8});
 }
 
@@ -923,9 +1191,9 @@ async function finishCombat(survived) {
   $('combatUpgrade').classList.add('hidden');
   $('combatIntro').classList.remove('hidden');
   $('combatStart').textContent='PLAY AGAIN';
-  $('combatMessage').textContent = survived ? 'Minute survived! Saving combat XP…' : 'You were overwhelmed. Saving partial XP…';
-  const {data,error}=await db.rpc('complete_combat_run',{p_survived:survived,p_kills:s.kills,p_damage:Math.floor(s.damage),p_seconds:Math.min(60,Math.floor(s.elapsed)),p_difficulty:s.difficulty});
-  if(error){console.error(error);$('combatMessage').textContent='Could not save combat XP. Run update-combat-survival.sql in Supabase.';return}
+  $('combatMessage').textContent = survived ? `${Math.round(s.difficultyConfig.duration/60)} minute tier survived! Saving combat XP…` : 'You were overwhelmed. Saving partial XP…';
+  const {data,error}=await db.rpc('complete_combat_run',{p_survived:survived,p_kills:s.kills,p_damage:Math.floor(s.damage),p_seconds:Math.min(s.difficultyConfig.duration,Math.floor(s.elapsed)),p_difficulty:s.difficulty});
+  if(error){console.error(error);$('combatMessage').textContent='Could not save combat XP. Run fix-combat-xp-current.sql in Supabase.';return}
   const r=data?.[0]; if(!r)return;
   character.attack_xp=Number(r.attack_xp);character.strength_xp=Number(r.strength_xp);character.defence_xp=Number(r.defence_xp);
   renderCharacter();
@@ -935,7 +1203,7 @@ async function finishCombat(survived) {
 
 function drawCombatBackdrop(ctx,w,h){
   const location=combatState?.location||selectedCombatLocation;
-  const palette={lumbridge:['#152416','#183019','#1c351d','#65513a'],'fight-caves':['#28120d','#38160f','#451d11','#8a4b25'],gauntlet:['#24082c','#32103d','#42114d','#b83378']}[location];
+  const palette={lumbridge:['#152416','#183019','#1c351d','#65513a'],'fight-caves':['#28120d','#38160f','#451d11','#8a4b25'],gauntlet:['#24082c','#32103d','#42114d','#b83378'],inferno:['#180705','#2b0b06','#441007','#f05b20']}[location];
   ctx.fillStyle=palette[0];ctx.fillRect(0,0,w,h);
   for(let x=0;x<w;x+=40)for(let y=0;y<h;y+=40){ctx.fillStyle=((x+y)/40)%2?palette[1]:palette[2];ctx.fillRect(x,y,40,40)}
   if(location==='fight-caves'){ctx.fillStyle='#f07b2b55';for(let x=30;x<w;x+=125){ctx.beginPath();ctx.arc(x,h-18,22,0,Math.PI*2);ctx.fill()}}
@@ -1035,7 +1303,7 @@ function crashSailing(){
 async function endSailing(survived){
  if(!sailingRunning)return;sailingRunning=false;cancelAnimationFrame(sailingFrame);stopSailingMusic(false);const s=sailingState;$('sailingDialog').classList.remove('danger');
  $('sailingIntro').classList.remove('hidden');$('sailingStart').textContent='GLIDE AGAIN';$('sailingMessage').textContent=survived?'Course complete! Saving Sailing XP…':'CRASHED! Saving partial Sailing XP…';
- const {data,error}=await db.rpc('complete_sailing_run',{p_survived:survived,p_score:Math.floor(s.score),p_gates:s.gates,p_seconds:Math.min(60,Math.floor(s.elapsed))});
+ const {data,error}=await db.rpc('complete_sailing_run',{p_survived:survived,p_score:Math.floor(s.score),p_gates:s.gates,p_seconds:Math.min(s.difficultyConfig.duration,Math.floor(s.elapsed))});
  if(error){console.error(error);$('sailingMessage').textContent='Could not save Sailing XP. Run update-sailing-minigame.sql in Supabase.';return}
  const r=data?.[0];if(!r)return;character.sailing_xp=Number(r.sailing_xp);renderCharacter();$('sailingMessage').textContent=`${survived?'High Seas complete!':'You crashed.'} +${r.sailing_gained} Sailing XP. Score ${Math.floor(s.score).toLocaleString('en-GB')}.`;toast('Sailing XP saved!',3200);
 }
@@ -1069,7 +1337,8 @@ function drawCombat(){
   const c=$('combatCanvas'),ctx=c.getContext('2d'),s=combatState;
   drawCombatBackdrop(ctx,c.width,c.height);
   if(!s)return;
-  s.orbs.forEach(o=>{ctx.fillStyle='#74d7ff';ctx.beginPath();ctx.arc(o.x,o.y,6,0,7);ctx.fill()});
+  if(s.inferno){for(const w of s.inferno.walls){ctx.fillStyle='rgba(255,77,12,.88)';ctx.fillRect(w.x-12,0,24,w.gapY-w.gapH/2);ctx.fillRect(w.x-12,w.gapY+w.gapH/2,24,430-(w.gapY+w.gapH/2));ctx.fillStyle='#ffd052';for(let y=8;y<430;y+=28){if(Math.abs(y-w.gapY)<w.gapH/2)continue;ctx.beginPath();ctx.moveTo(w.x-18,y+12);ctx.lineTo(w.x,y-10);ctx.lineTo(w.x+18,y+12);ctx.fill();}}}
+  s.orbs.forEach(o=>{ctx.fillStyle=o.heal?'#72e08d':'#74d7ff';ctx.beginPath();ctx.arc(o.x,o.y,o.heal?8:6,0,7);ctx.fill();if(o.heal){ctx.fillStyle='#fff';ctx.fillRect(o.x-2,o.y-5,4,10);ctx.fillRect(o.x-5,o.y-2,10,4)}});
   s.enemies.forEach(e=>drawCombatEnemy(ctx,e));
   drawCombatPlayer(ctx,s.player,s.weapon);
   s.slashes.forEach(a=>{ctx.strokeStyle='#fff2a0';ctx.lineWidth=6;ctx.beginPath();ctx.arc(a.x,a.y,28,-1.35,.75);ctx.stroke()});
@@ -1102,6 +1371,7 @@ function drawCombatEnemy(ctx,e){
   else if(e.type==='corrupted-rat'){ctx.fillStyle='#d52d86';ctx.beginPath();ctx.ellipse(0,2,15,9,0,0,7);ctx.fill();ctx.fillStyle='#f98bc2';ctx.fillRect(8,-5,8,7)}
   else if(e.type==='corrupted-unicorn'){ctx.fillStyle='#ad3a93';ctx.fillRect(-17,-10,34,23);ctx.fillStyle='#f2a5dc';ctx.beginPath();ctx.moveTo(13,-10);ctx.lineTo(25,-23);ctx.lineTo(19,-7);ctx.fill()}
   else if(e.type==='corrupted-dragon'){ctx.fillStyle='#7f1e72';ctx.beginPath();ctx.moveTo(-21,12);ctx.lineTo(-14,-16);ctx.lineTo(0,-8);ctx.lineTo(15,-20);ctx.lineTo(22,13);ctx.closePath();ctx.fill();ctx.fillStyle='#ff58b8';ctx.fillRect(9,-13,6,4)}
+  else if(e.type==='inferno-boss'){ctx.fillStyle='#40100a';ctx.beginPath();ctx.arc(0,2,43,0,7);ctx.fill();ctx.strokeStyle='#ff6a20';ctx.lineWidth=8;for(let a=0;a<8;a++){const q=a*Math.PI/4;ctx.beginPath();ctx.moveTo(Math.cos(q)*34,Math.sin(q)*34);ctx.lineTo(Math.cos(q)*56,Math.sin(q)*56);ctx.stroke()}ctx.fillStyle='#ffd33d';ctx.beginPath();ctx.arc(-14,-8,7,0,7);ctx.arc(14,-8,7,0,7);ctx.fill();ctx.fillStyle='#ff310f';ctx.fillRect(-18,13,36,8)}
   else {ctx.fillStyle='#441047';ctx.beginPath();ctx.arc(0,0,27,0,7);ctx.fill();ctx.strokeStyle='#ff5fbf';ctx.lineWidth=5;for(let a=0;a<6;a++){const q=a*Math.PI/3;ctx.beginPath();ctx.moveTo(Math.cos(q)*20,Math.sin(q)*20);ctx.lineTo(Math.cos(q)*34,Math.sin(q)*34);ctx.stroke()}ctx.fillStyle='#f6a1db';ctx.fillRect(-12,-6,8,6);ctx.fillRect(4,-6,8,6)}
   ctx.fillStyle='#360b0b';ctx.fillRect(-14,-e.r-8,28,4);ctx.fillStyle='#b52b35';ctx.fillRect(-14,-e.r-8,28*Math.max(0,e.hp/e.maxHp),4);ctx.restore()
 }
@@ -1170,6 +1440,8 @@ function freshRcBalls(){
   return balls;
 }
 function defaultRcState(host){return{balls:freshRcBalls(),turn:1,groups:{1:0,2:0},status:'waiting',winner:0,players:{1:host,2:null},revision:1,shot_active:false,shot_by:0,message:'Waiting for player two…'}}
+function selectRcAiDifficulty(type){if(!['easy','medium','hard'].includes(type))return;selectedRcAiDifficulty=type;document.querySelectorAll('.rc-ai-choice').forEach(b=>b.classList.toggle('selected',b.dataset.ai===type));}
+function playRcComputer(){const state=defaultRcState(character.username);state.players[2]=`Computer (${selectedRcAiDifficulty})`;state.status='playing';state.message=`${character.username} breaks first.`;rcRoom={id:null,code:'SOLO',state,slot:1,isComputer:true,aiDifficulty:selectedRcAiDifficulty};$('rcLobby').classList.add('hidden');$('rcGame').classList.remove('hidden');$('rcCodeLabel').textContent='SINGLE PLAYER';$('rcPlayerLabel').textContent=`P1 · ${character.username}`;startRcMusic();renderRcState();}
 function rcCode(){return Math.random().toString(36).slice(2,8).toUpperCase()}
 function startRcMusic(){const a=$('rcMusic');if(!a)return;a.volume=.42;a.currentTime=0;const play=a.play();if(play?.catch)play.catch(()=>{})}
 function stopRcMusic(){const a=$('rcMusic');if(!a)return;a.pause();a.currentTime=0}
@@ -1196,10 +1468,10 @@ function drawRcTable(){const c=$('rcCanvas'),ctx=c.getContext('2d');ctx.clearRec
 function rcPointerPos(e){const r=$('rcCanvas').getBoundingClientRect();return{x:(e.clientX-r.left)*RC_W/r.width,y:(e.clientY-r.top)*RC_H/r.height}}
 function rcAimStart(e){if(!rcRoom||rcAnimating)return;const s=rcRoom.state;if(s.status!=='playing'||s.turn!==rcRoom.slot||s.shot_active)return;const cue=s.balls[0];if(cue.potted)return;const p=rcPointerPos(e);if(Math.hypot(p.x-cue.x,p.y-cue.y)<45){rcAim=p;$('rcCanvas').setPointerCapture(e.pointerId);drawRcTable()}}
 function rcAimMove(e){if(!rcAim)return;rcAim=rcPointerPos(e);drawRcTable()}
-function rcAimEnd(e){if(!rcAim||!rcRoom)return;const cue=rcRoom.state.balls[0],p=rcPointerPos(e),dx=cue.x-p.x,dy=cue.y-p.y,len=Math.hypot(dx,dy);rcAim=null;if(len<8)return drawRcTable();const power=Number($('rcPower').value)/100;cue.vx=dx/len*Math.min(700,len*5)*power;cue.vy=dy/len*Math.min(700,len*5)*power;runRcPhysics()}
+function rcAimEnd(e){if(!rcAim||!rcRoom)return;const cue=rcRoom.state.balls[0],p=rcPointerPos(e),dx=cue.x-p.x,dy=cue.y-p.y,len=Math.hypot(dx,dy);rcAim=null;if(len<8)return drawRcTable();const power=Number($('rcPower').value)/100;cue.vx=dx/len*Math.min(700,len*5)*power;cue.vy=dy/len*Math.min(700,len*5)*power;drawRcTable();runRcPhysics()}
 let rcLastLiveSync=0,rcLiveSyncBusy=false;
 async function syncRcLiveShot(force=false){
-  if(!rcRoom||!rcRoom.state?.shot_active||rcLiveSyncBusy)return;
+  if(!rcRoom||rcRoom.isComputer||!rcRoom.id||!rcRoom.state?.shot_active||rcLiveSyncBusy)return;
   const now=performance.now();
   if(!force&&now-rcLastLiveSync<90)return;
   rcLastLiveSync=now;rcLiveSyncBusy=true;
@@ -1209,8 +1481,11 @@ async function syncRcLiveShot(force=false){
 async function runRcPhysics(){
   rcAnimating=true;
   const s=rcRoom.state;
-  s.shot_active=true;s.shot_by=rcRoom.slot;s.revision++;
-  await syncRcLiveShot(true);
+  s.shot_active=true;s.shot_by=rcRoom.isComputer?(s.shot_by||s.turn):rcRoom.slot;s.revision++;
+  // Start the local animation immediately. Network syncing runs in the background,
+  // so the player taking the shot never waits for Supabase before seeing the cue ball move.
+  drawRcTable();
+  syncRcLiveShot(true);
   let potted=[],cuePotted=false,last=performance.now();
   function frame(now){
     const dt=Math.min(.025,(now-last)/1000);last=now;let moving=false;
@@ -1221,10 +1496,257 @@ async function runRcPhysics(){
   }
   requestAnimationFrame(frame)
 }
-async function finishRcShot(potted,cuePotted){const s=rcRoom.state,me=rcRoom.slot,other=me===1?2:1;s.shot_active=false;s.shot_by=0;if(!s.groups[me]){const first=potted.find(b=>b.group===1||b.group===2);if(first){s.groups[me]=first.group;s.groups[other]=first.group===1?2:1}}const wrath=potted.find(b=>b.group===8);const own=potted.filter(b=>b.group===s.groups[me]);const remainingOwn=s.balls.some(b=>!b.potted&&b.group===s.groups[me]);if(wrath){s.status='finished';s.winner=!remainingOwn&&!cuePotted?me:other;s.message=`${s.players[s.winner]} wins the match!`;stopRcMusic();await awardRcXp(s.winner===me)}else{if(cuePotted){const cue=s.balls[0];cue.potted=false;cue.x=190;cue.y=215;s.turn=other;s.message='Essence ball scratched — turn lost.'}else if(!own.length){s.turn=other;s.message=`Turn passes to ${s.players[other]}.`}else{s.message=`${s.groups[me]===1?'Fire':'Chaos'} rune potted! ${s.players[me]} continues.`}}s.revision++;const {data,error}=await db.from('runecrafting_rooms').update({state:s,updated_at:new Date().toISOString()}).eq('id',rcRoom.id).select().single();rcAnimating=false;if(!error){rcRoom={...data,slot:me};renderRcState()}}
+async function finishRcShot(potted,cuePotted){
+  const s=rcRoom.state,me=rcRoom.isComputer?(s.shot_by||s.turn):rcRoom.slot,other=me===1?2:1;
+  s.shot_active=false;s.shot_by=0;
+  if(!s.groups[me]){const first=potted.find(b=>b.group===1||b.group===2);if(first){s.groups[me]=first.group;s.groups[other]=first.group===1?2:1}}
+  const wrath=potted.find(b=>b.group===8);const own=potted.filter(b=>b.group===s.groups[me]);const remainingOwn=s.balls.some(b=>!b.potted&&b.group===s.groups[me]);
+  if(wrath){s.status='finished';s.winner=!remainingOwn&&!cuePotted?me:other;s.message=`${s.players[s.winner]} wins the match!`;stopRcMusic();if(rcRoom.isComputer)await awardRcXp(s.winner===1);else await awardRcXp(s.winner===rcRoom.slot)}
+  else if(cuePotted){const cue=s.balls[0];cue.potted=false;cue.x=190;cue.y=215;cue.vx=cue.vy=0;s.turn=other;s.message='Essence ball scratched — turn lost.'}
+  else if(!own.length){s.turn=other;s.message=`Turn passes to ${s.players[other]}.`}
+  else{s.message=`${s.groups[me]===1?'Fire':'Chaos'} rune potted! ${s.players[me]} continues.`}
+  s.revision++;rcAnimating=false;
+  if(rcRoom.isComputer){renderRcState();if(s.status==='playing'&&s.turn===2)queueRcComputerShot();return;}
+  const {data,error}=await db.from('runecrafting_rooms').update({state:s,updated_at:new Date().toISOString()}).eq('id',rcRoom.id).select().single();
+  if(!error){rcRoom={...data,slot:rcRoom.slot};renderRcState()}
+}
+function queueRcComputerShot(){clearTimeout(rcAiTimer);if(!rcRoom?.isComputer||rcRoom.state.status!=='playing'||rcRoom.state.turn!==2)return;$('rcMessage').textContent=`${rcRoom.state.players[2]} is lining up a shot…`;rcAiTimer=setTimeout(takeRcComputerShot,{easy:1250,medium:850,hard:520}[rcRoom.aiDifficulty]);}
+function takeRcComputerShot(){
+  if(!rcRoom?.isComputer||rcAnimating||rcRoom.state.turn!==2)return;
+  const s=rcRoom.state,cue=s.balls[0],group=s.groups[2];
+  let targets=s.balls.filter(b=>!b.potted&&b.id!=='cue'&&(group?b.group===group:(b.group===1||b.group===2)));
+  if(group&&!targets.length)targets=s.balls.filter(b=>!b.potted&&b.group===8);
+  if(!targets.length)return;
+  const diff=rcRoom.aiDifficulty,accuracy={easy:0.30,medium:0.13,hard:0.045}[diff];
+  let best=null;
+  for(const t of targets){for(const [px,py] of RC_POCKETS){const score=Math.hypot(t.x-px,t.y-py)+Math.hypot(cue.x-t.x,cue.y-t.y)*.32;if(!best||score<best.score)best={t,px,py,score}}}
+  const t=best.t,tx=best.px-t.x,ty=best.py-t.y,tl=Math.hypot(tx,ty)||1;
+  const contactX=t.x-(tx/tl)*RC_R*2,contactY=t.y-(ty/tl)*RC_R*2;
+  let dx=contactX-cue.x,dy=contactY-cue.y,len=Math.hypot(dx,dy)||1;
+  const angle=(Math.random()-.5)*accuracy*2;const ca=Math.cos(angle),sa=Math.sin(angle),nx=(dx/len)*ca-(dy/len)*sa,ny=(dx/len)*sa+(dy/len)*ca;
+  const speed={easy:400,medium:520,hard:610}[diff]*(.86+Math.random()*.18);
+  cue.vx=nx*speed;cue.vy=ny*speed;s.shot_by=2;drawRcTable();runRcPhysics();
+}
 async function awardRcXp(won){const {data}=await db.rpc('complete_runecrafting_match',{p_won:won});const r=data?.[0];if(r){character.runecrafting_xp=Number(r.new_xp);renderCharacter();toast(`+${r.xp_gained} Runecrafting XP`,3500)}}
-async function rcRematch(){if(!rcRoom)return;const s=defaultRcState(rcRoom.state.players[1]);s.players=rcRoom.state.players;s.status=s.players[2]?'playing':'waiting';s.message=s.status==='playing'?`${s.players[1]} breaks first.`:'Waiting for player two…';const {data}=await db.from('runecrafting_rooms').update({state:s}).eq('id',rcRoom.id).select().single();if(data){rcRoom={...data,slot:rcRoom.slot};if(s.status==='playing')startRcMusic();renderRcState()}}
-function leaveRcRoom(){stopRcMusic();clearInterval(rcPollTimer);rcPollTimer=null;rcRoom=null;rcAnimating=false;rcAim=null;$('rcGame').classList.add('hidden');$('rcLobby').classList.remove('hidden')}
+async function rcRematch(){if(!rcRoom)return;const s=defaultRcState(rcRoom.state.players[1]);s.players=rcRoom.state.players;s.status=s.players[2]?'playing':'waiting';s.message=s.status==='playing'?`${s.players[1]} breaks first.`:'Waiting for player two…';if(rcRoom.isComputer){rcRoom.state=s;startRcMusic();renderRcState();return}const {data}=await db.from('runecrafting_rooms').update({state:s}).eq('id',rcRoom.id).select().single();if(data){rcRoom={...data,slot:rcRoom.slot};if(s.status==='playing')startRcMusic();renderRcState()}}
+function leaveRcRoom(){stopRcMusic();clearTimeout(rcAiTimer);clearInterval(rcPollTimer);rcPollTimer=null;rcRoom=null;rcAnimating=false;rcAim=null;$('rcGame').classList.add('hidden');$('rcLobby').classList.remove('hidden')}
+
+
+const PET_CATALOG = {"pet_free_cat":{"name":"Repo cat","source":"Free starter pet","price":0,"image":"assets/pets/free_cat.svg"},"pet_abyssal_orphan":{"name":"Abyssal orphan","source":"Abyssal Sire","price":55000,"image":"assets/pets/abyssal_orphan.png"},"pet_baby_mole":{"name":"Baby mole","source":"Giant Mole","price":30000,"image":"assets/pets/baby_mole.png"},"pet_baron":{"name":"Baron","source":"Duke Sucellus","price":90000,"image":"assets/pets/baron.png"},"pet_bran":{"name":"Bran","source":"Royal Titans","price":85000,"image":"assets/pets/bran.png"},"pet_beef":{"name":"Beef","source":"Brutus","price":65000,"image":"assets/pets/beef.png"},"pet_butch":{"name":"Butch","source":"Vardorvis","price":95000,"image":"assets/pets/butch.png"},"pet_callisto_cub":{"name":"Callisto cub","source":"Callisto and Artio","price":70000,"image":"assets/pets/callisto_cub.png"},"pet_dom":{"name":"Dom","source":"Doom of Mokhaiotl","price":90000,"image":"assets/pets/dom.png"},"pet_gull":{"name":"Gull","source":"Shellbane Gryphon","price":60000,"image":"assets/pets/gull.png"},"pet_hellpuppy":{"name":"Hellpuppy","source":"Cerberus","price":70000,"image":"assets/pets/hellpuppy.png"},"pet_huberte":{"name":"Huberte","source":"The Hueycoatl","price":65000,"image":"assets/pets/huberte.png"},"pet_ikkle_hydra":{"name":"Ikkle hydra","source":"Alchemical Hydra","price":85000,"image":"assets/pets/ikkle_hydra.png"},"pet_jal_nib_rek":{"name":"Jal-nib-rek","source":"Inferno","price":250000,"image":"assets/pets/jal_nib_rek.png"},"pet_kalphite_princess":{"name":"Kalphite princess","source":"Kalphite Queen","price":55000,"image":"assets/pets/kalphite_princess.png"},"pet_lil_zik":{"name":"Lil' zik","source":"Theatre of Blood","price":175000,"image":"assets/pets/lil_zik.png"},"pet_lilviathan":{"name":"Lil'viathan","source":"The Leviathan","price":95000,"image":"assets/pets/lilviathan.png"},"pet_little_nightmare":{"name":"Little nightmare","source":"The Nightmare and Phosani's Nightmare","price":100000,"image":"assets/pets/little_nightmare.png"},"pet_maggot_marquess":{"name":"Maggot marquess","source":"Maggot King","price":65000,"image":"assets/pets/maggot_marquess.png"},"pet_moxi":{"name":"Moxi","source":"Amoxliatl","price":60000,"image":"assets/pets/moxi.png"},"pet_muphin":{"name":"Muphin","source":"Phantom Muspah","price":75000,"image":"assets/pets/muphin.png"},"pet_nexling":{"name":"Nexling","source":"Nex","price":160000,"image":"assets/pets/nexling.png"},"pet_nid":{"name":"Nid","source":"Araxxor","price":85000,"image":"assets/pets/nid.png"},"pet_noon":{"name":"Noon","source":"Grotesque Guardians","price":55000,"image":"assets/pets/noon.png"},"pet_olmlet":{"name":"Olmlet","source":"Chambers of Xeric","price":150000,"image":"assets/pets/olmlet.png"},"pet_pet_chaos_elemental":{"name":"Pet chaos elemental","source":"Chaos Elemental and Chaos Fanatic","price":40000,"image":"assets/pets/pet_chaos_elemental.png"},"pet_pet_dagannoth_prime":{"name":"Pet dagannoth prime","source":"Dagannoth Prime","price":45000,"image":"assets/pets/pet_dagannoth_prime.png"},"pet_pet_dagannoth_rex":{"name":"Pet dagannoth rex","source":"Dagannoth Rex","price":45000,"image":"assets/pets/pet_dagannoth_rex.png"},"pet_pet_dagannoth_supreme":{"name":"Pet dagannoth supreme","source":"Dagannoth Supreme","price":45000,"image":"assets/pets/pet_dagannoth_supreme.png"},"pet_pet_dark_core":{"name":"Pet dark core","source":"Corporeal Beast","price":100000,"image":"assets/pets/pet_dark_core.png"},"pet_pet_general_graardor":{"name":"Pet general graardor","source":"General Graardor","price":80000,"image":"assets/pets/pet_general_graardor.png"},"pet_pet_kril_tsutsaroth":{"name":"Pet k'ril tsutsaroth","source":"K'ril Tsutsaroth","price":80000,"image":"assets/pets/pet_kril_tsutsaroth.png"},"pet_pet_kraken":{"name":"Pet kraken","source":"Kraken","price":45000,"image":"assets/pets/pet_kraken.png"},"pet_pet_kreearra":{"name":"Pet kree'arra","source":"Kree'arra","price":80000,"image":"assets/pets/pet_kreearra.png"},"pet_pet_smoke_devil":{"name":"Pet smoke devil","source":"Thermonuclear smoke devil","price":50000,"image":"assets/pets/pet_smoke_devil.png"},"pet_pet_snakeling":{"name":"Pet snakeling","source":"Zulrah","price":65000,"image":"assets/pets/pet_snakeling.png"},"pet_pet_zilyana":{"name":"Pet zilyana","source":"Commander Zilyana","price":80000,"image":"assets/pets/pet_zilyana.png"},"pet_phoenix":{"name":"Phoenix","source":"Wintertodt","price":35000,"image":"assets/pets/phoenix.png"},"pet_prince_black_dragon":{"name":"Prince black dragon","source":"King Black Dragon","price":55000,"image":"assets/pets/prince_black_dragon.png"},"pet_scorpias_offspring":{"name":"Scorpia's offspring","source":"Scorpia","price":40000,"image":"assets/pets/scorpias_offspring.png"},"pet_scurry":{"name":"Scurry","source":"Scurrius","price":30000,"image":"assets/pets/scurry.png"},"pet_skotos":{"name":"Skotos","source":"Skotizo","price":50000,"image":"assets/pets/skotos.png"},"pet_smolcano":{"name":"Smolcano","source":"Zalcano","price":45000,"image":"assets/pets/smolcano.png"},"pet_smol_heredit":{"name":"Smol heredit","source":"Sol Heredit","price":90000,"image":"assets/pets/smol_heredit.png"},"pet_saracha":{"name":"Sraracha","source":"Sarachnis","price":40000,"image":"assets/pets/saracha.png"},"pet_tiny_tempor":{"name":"Tiny tempor","source":"Tempoross","price":35000,"image":"assets/pets/tiny_tempor.png"},"pet_tumekens_guardian":{"name":"Tumeken's guardian","source":"Tombs of Amascut","price":150000,"image":"assets/pets/tumekens_guardian.png"},"pet_tzrek_jad":{"name":"Tzrek-jad","source":"TzHaar Fight Cave","price":120000,"image":"assets/pets/tzrek_jad.png"},"pet_venenatis_spiderling":{"name":"Venenatis spiderling","source":"Venenatis and Spindel","price":70000,"image":"assets/pets/venenatis_spiderling.png"},"pet_vetion_jr":{"name":"Vet'ion jr.","source":"Vet'ion and Calvar'ion","price":70000,"image":"assets/pets/vetion_jr.png"},"pet_vorki":{"name":"Vorki","source":"Vorkath","price":75000,"image":"assets/pets/vorki.png"},"pet_wisp":{"name":"Wisp","source":"The Whisperer","price":95000,"image":"assets/pets/wisp.png"},"pet_yami":{"name":"Yami","source":"Yama","price":100000,"image":"assets/pets/yami.png"},"pet_youngllef":{"name":"Youngllef","source":"The Gauntlet","price":110000,"image":"assets/pets/youngllef.png"}};
+let activePetState=null;
+let petNamesState={};
+let roamingPetTimer=null;
+
+let bankState = null;
+
+function renderBank(){
+  const gp=Number(bankState?.gp||0);
+  $('bankGp').textContent=`${gp.toLocaleString('en-GB')} GP`;
+  const items=bankState?.items&&typeof bankState.items==='object'?bankState.items:{};
+  const entries=Object.entries(items).filter(([,qty])=>Number(qty)>0);
+  const activeMeta=activePetState&&PET_CATALOG[activePetState];
+  const activeDisplayName=activePetState?(petNamesState[activePetState]||activeMeta?.name):null;
+  $('bankActivePet').innerHTML=activeMeta?`<img src="${activeMeta.image}" alt=""> ${escapeHtml(activeDisplayName)}`:'No pet out';
+  $('bankPutPetAway').disabled=!activePetState;
+  if(!entries.length){
+    $('bankItems').innerHTML=Array.from({length:20},(_,i)=>`<div class="bank-slot empty"><span>${i===0?'EMPTY BANK':'—'}</span></div>`).join('');
+    $('bankMessage').textContent='Your bank is ready. Purchased pets will appear here.';
+    return;
+  }
+  const slots=entries.map(([id,qty])=>{
+    const pet=PET_CATALOG[id];
+    if(pet){const customName=petNamesState[id]||'';return `<div class="bank-slot pet-bank-slot ${activePetState===id?'active-pet':''}"><img src="${pet.image}" alt="${escapeHtml(pet.name)}"><b>${escapeHtml(customName||pet.name)}</b><small>${escapeHtml(pet.source)}</small><div class="pet-name-row"><input class="pet-name-input" data-pet-id="${escapeHtml(id)}" maxlength="20" value="${escapeHtml(customName)}" placeholder="Name your pet"><button type="button" class="pet-name-save" data-pet-id="${escapeHtml(id)}">SAVE</button></div><button type="button" class="bank-pet-toggle" data-pet-id="${escapeHtml(id)}">${activePetState===id?'PUT AWAY':'LET OUT'}</button></div>`;}
+    return `<div class="bank-slot"><div class="bank-placeholder">?</div><b>${String(id).replaceAll('_',' ')}</b><strong>${Number(qty).toLocaleString('en-GB')}</strong></div>`;
+  });
+  while(slots.length<20)slots.push('<div class="bank-slot empty"><span>—</span></div>');
+  $('bankItems').innerHTML=slots.join('');
+  $('bankItems').querySelectorAll('.bank-pet-toggle').forEach(b=>b.addEventListener('click',()=>setMyActivePet(activePetState===b.dataset.petId?null:b.dataset.petId)));
+  $('bankItems').querySelectorAll('.pet-name-save').forEach(b=>b.addEventListener('click',()=>savePetName(b.dataset.petId)));
+  $('bankItems').querySelectorAll('.pet-name-input').forEach(input=>input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();savePetName(input.dataset.petId)}}));
+  $('bankMessage').textContent=`${entries.length} item type${entries.length===1?'':'s'} stored.`;
+}
+
+async function openBank(){
+  if(!character){
+    toast('Log in or create an account to open your bank.');
+    openCharacterDialog('login');
+    return;
+  }
+  bankState=null;
+  $('bankGp').textContent='Loading…';
+  $('bankItems').innerHTML='';
+  $('bankMessage').textContent='Opening your bank…';
+  $('bankDialog').showModal();
+  const {data,error}=await db.rpc('get_my_bank');
+  if(error){
+    console.error(error);
+    $('bankMessage').textContent='Could not open the bank. Run update-bank.sql in Supabase.';
+    return;
+  }
+  bankState=data?.[0]||{gp:0,items:{}};
+  const petResult=await db.rpc('get_my_active_pet');
+  activePetState=petResult.error?null:(petResult.data?.[0]?.active_pet||null);
+  petNamesState=petResult.error?{}:(petResult.data?.[0]?.pet_names||{});
+  renderBank();
+}
+
+async function savePetName(petId){
+  const input=$('bankItems').querySelector(`.pet-name-input[data-pet-id="${CSS.escape(petId)}"]`);
+  const name=(input?.value||'').trim();
+  if(!name){$('bankMessage').textContent='Enter a pet name first.';return;}
+  $('bankMessage').textContent='Saving pet name…';
+  const {data,error}=await db.rpc('set_pet_name',{p_pet_id:petId,p_pet_name:name});
+  if(error){console.error(error);$('bankMessage').textContent=error.message||'Could not save the pet name.';return;}
+  petNamesState=data?.[0]?.pet_names||petNamesState;renderBank();refreshRoamingPets();
+  $('bankMessage').textContent=`${name} is now this pet's name.`;
+}
+async function setMyActivePet(petId){
+  $('bankMessage').textContent=petId?'Calling your pet…':'Putting your pet away…';
+  const {data,error}=await db.rpc('set_active_pet',{p_pet_id:petId});
+  if(error){console.error(error);$('bankMessage').textContent=error.message||'Could not update your active pet.';return;}
+  activePetState=data?.[0]?.active_pet||null;if(data?.[0]?.pet_names)petNamesState=data[0].pet_names;renderBank();refreshRoamingPets();
+  $('bankMessage').textContent=activePetState?`${PET_CATALOG[activePetState]?.name||'Your pet'} is now following you.`:'Your pet has been put away.';
+}
+function moveRoamingPet(el,immediate=false){
+  const pad=22;
+  const maxX=Math.max(pad,window.innerWidth-el.offsetWidth-pad);
+  const minY=Math.max(150,Math.floor(window.innerHeight*.52));
+  const maxY=Math.max(minY,window.innerHeight-el.offsetHeight-28);
+  const previousX=Number(el.dataset.x||pad);
+  const x=pad+Math.random()*(maxX-pad);
+  // Pets walk on lower-page lanes rather than floating anywhere on screen.
+  const laneCount=Math.max(1,Math.floor((maxY-minY)/62)+1);
+  const lane=Math.floor(Math.random()*laneCount);
+  const y=Math.min(maxY,minY+lane*62);
+  const facing=x>=previousX?1:-1;
+  el.dataset.x=String(x);el.dataset.y=String(y);
+  el.style.transitionDuration=immediate?'0s':`${5.5+Math.random()*3.5}s`;
+  el.style.transform=`translate3d(${x}px,${y}px,0)`;
+  const sprite=el.querySelector('.pet-sprite');
+  if(sprite)sprite.style.setProperty('--pet-facing',String(facing));
+  el.classList.toggle('pet-is-walking',!immediate);
+  clearTimeout(el._walkStopTimer);
+  if(!immediate)el._walkStopTimer=setTimeout(()=>el.classList.remove('pet-is-walking'),8500);
+}
+async function refreshRoamingPets(){
+  const {data,error}=await db.rpc('get_active_pets');if(error){console.error(error);return;}
+  const layer=$('roamingPets');if(!layer)return;
+  const current=new Map([...layer.children].map(el=>[el.dataset.user,el]));
+  (data||[]).slice(0,18).forEach(row=>{
+    const meta=PET_CATALOG[row.active_pet];if(!meta)return;
+    const petDisplayName=row.pet_name||meta.name;let el=current.get(row.username);if(!el){el=document.createElement('div');el.className='roaming-pet';el.dataset.user=row.username;el.innerHTML=`<div class="pet-label"><b>${escapeHtml(petDisplayName)}</b><small>${escapeHtml(row.username)}</small></div><div class="pet-sprite"><img src="${meta.image}" alt="${escapeHtml(petDisplayName)}"></div>`;layer.appendChild(el);requestAnimationFrame(()=>moveRoamingPet(el,true));}else{el.querySelector('img').src=meta.image;el.querySelector('img').alt=petDisplayName;el.querySelector('.pet-label b').textContent=petDisplayName;el.querySelector('.pet-label small').textContent=row.username;current.delete(row.username);}
+  });
+  current.forEach(el=>el.remove());
+}
+function startRoamingPets(){clearInterval(roamingPetTimer);refreshRoamingPets();roamingPetTimer=setInterval(()=>{refreshRoamingPets();document.querySelectorAll('.roaming-pet').forEach(el=>moveRoamingPet(el));},9000);}
+
+let geState={gp:0,items:[]};
+let geSearchTimer=null;
+
+function renderGeItems(){
+  const results=$('geResults');
+  const items=Array.isArray(geState.items)?geState.items:[];
+  $('geGp').textContent=`${Number(geState.gp||0).toLocaleString('en-GB')} GP`;
+  if(!items.length){
+    results.innerHTML='<div class="ge-empty"><b>NO ITEMS LISTED</b><span>The Grand Exchange is ready. Items added later will appear here and become searchable.</span></div>';
+    return;
+  }
+  results.innerHTML=items.map(item=>`<article class="ge-item-row">\n    <div class="ge-item-icon">${item.image_url?`<img src="${escapeHtml(item.image_url)}" alt="">`:'?'}</div>\n    <div class="ge-item-info"><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description||'Repo Company market item')}</small></div>\n    <strong class="ge-price"><img src="assets/gold-pieces.png" alt="">${Number(item.price||0).toLocaleString('en-GB')}</strong>\n    <button type="button" class="ge-buy" data-item-id="${escapeHtml(item.item_id)}" ${Number(item.price)>Number(geState.gp)?'disabled':''}>BUY</button>\n  </article>`).join('');
+  results.querySelectorAll('.ge-buy').forEach(button=>button.addEventListener('click',()=>buyGeItem(button.dataset.itemId,button)));
+}
+
+async function searchGeItems(){
+  const query=$('geSearch').value.trim();
+  $('geMessage').textContent='Searching the Grand Exchange…';
+  const {data,error}=await db.rpc('get_grand_exchange_items',{p_search:query});
+  if(error){console.error(error);$('geMessage').textContent='Could not load the Grand Exchange. Run update-grand-exchange.sql in Supabase.';return;}
+  geState.items=data||[];renderGeItems();
+  $('geMessage').textContent=geState.items.length?`${geState.items.length} item${geState.items.length===1?'':'s'} found.`:'No matching items are currently listed.';
+}
+
+async function openGrandExchange(){
+  if(!character){toast('Log in or create an account to use the Grand Exchange.');openCharacterDialog('login');return;}
+  $('grandExchangeDialog').showModal();$('geSearch').value='';$('geResults').innerHTML='<div class="ge-empty"><b>LOADING MARKET…</b></div>';$('geMessage').textContent='Opening the Grand Exchange…';
+  const {data,error}=await db.rpc('get_my_bank');
+  if(error){console.error(error);$('geMessage').textContent='Could not read your GP balance. Run update-bank.sql first.';return;}
+  geState.gp=Number(data?.[0]?.gp||0);await searchGeItems();
+}
+
+async function buyGeItem(itemId,button){
+  if(!itemId||busy)return;busy=true;button.disabled=true;$('geMessage').textContent='Submitting Grand Exchange offer…';
+  const {data,error}=await db.rpc('buy_grand_exchange_item',{p_item_id:itemId,p_quantity:1});busy=false;
+  if(error||!data?.[0]){console.error(error);$('geMessage').textContent=error?.message||'Purchase failed.';button.disabled=false;return;}
+  const result=data[0];geState.gp=Number(result.new_gp);renderGeItems();
+  $('geMessage').textContent=`Bought ${result.item_name} for ${Number(result.spent_gp).toLocaleString('en-GB')} GP. It is now in your Bank.`;
+  bankState={gp:result.new_gp,items:result.bank_items};
+}
+
+let wiseTaskState = null;
+let wiseTaskCheckTimer = null;
+let wiseTaskChecking = false;
+const WISE_SKILL_LABELS = {agility:'Agility',slayer:'Slayer',combat:'Combat',sailing:'Sailing',runecrafting:'Runecrafting'};
+
+function queueWiseTaskCheck(delay=450){
+  clearTimeout(wiseTaskCheckTimer);
+  if(!character)return;
+  wiseTaskCheckTimer=setTimeout(()=>checkWiseTaskProgress(true),delay);
+}
+async function fetchWiseTask(){
+  const {data,error}=await db.rpc('get_wise_old_man_task');
+  if(error){console.error(error);return null}
+  return data?.[0]||null;
+}
+function renderWiseTask(){
+  const t=wiseTaskState;if(!t)return;
+  $('wiseGp').textContent=`${Number(t.gp||0).toLocaleString('en-GB')} GP`;
+  const active=Boolean(t.task_skill);
+  $('wiseNoTask').classList.toggle('hidden',active);
+  $('wiseActiveTask').classList.toggle('hidden',!active);
+  $('wiseTaskBadge').classList.toggle('hidden',!t.can_claim);
+  if(!active)return;
+  const label=WISE_SKILL_LABELS[t.task_skill]||t.task_skill;
+  const required=Number(t.required_xp)||0,current=Math.max(0,Number(t.current_xp)-Number(t.start_xp)),done=Math.min(required,current);
+  const pct=required?Math.min(100,(done/required)*100):0;
+  $('wiseTaskTitle').textContent=`Earn ${required.toLocaleString('en-GB')} ${label} XP`;
+  $('wiseTaskText').textContent=t.task_skill==='combat'?'Play Level Combat in any location or difficulty. Attack, Strength and Defence XP all count.':`Play Level ${label} and earn the assigned XP.`;
+  $('wiseTaskProgress').textContent=`${done.toLocaleString('en-GB')} / ${required.toLocaleString('en-GB')} XP`;
+  $('wiseTaskReward').textContent=`${Number(t.reward_gp).toLocaleString('en-GB')} GP`;
+  $('wiseTaskFill').style.width=`${pct}%`;
+  $('wiseClaimTask').classList.toggle('hidden',!t.can_claim);
+  $('wiseActiveTask').classList.toggle('complete',Boolean(t.can_claim));
+  $('wiseTaskMessage').textContent=t.can_claim?'Task complete — claim your Gold pieces!':'Earn the XP in the matching Repo Company level.';
+}
+async function openWiseTask(){
+  if(!character){
+    toast('Log in or create an account before taking a Wise Old Man task.');
+    openCharacterDialog('login');
+    return;
+  }
+  $('wiseTaskDialog').showModal();
+  $('wiseTaskMessage').textContent='Checking your assignment…';
+  wiseTaskState=await fetchWiseTask();
+  if(!wiseTaskState){$('wiseTaskMessage').textContent='Run update-wise-old-man-tasks.sql in Supabase first.';return}
+  renderWiseTask();
+}
+async function requestWiseTask(){
+  $('wiseGetTask').disabled=true;
+  const {data,error}=await db.rpc('assign_wise_old_man_task');
+  $('wiseGetTask').disabled=false;
+  if(error){console.error(error);toast('Could not assign task. Run the Wise Old Man SQL.');return}
+  wiseTaskState=data?.[0]||await fetchWiseTask();renderWiseTask();
+  if(wiseTaskState?.task_skill)toast(`New task: earn ${Number(wiseTaskState.required_xp).toLocaleString('en-GB')} ${WISE_SKILL_LABELS[wiseTaskState.task_skill]} XP`,4200);
+}
+async function claimWiseTask(auto=false){
+  const {data,error}=await db.rpc('claim_wise_old_man_task');
+  if(error){console.error(error);if(!auto)toast('Task is not complete yet.');return false}
+  const r=data?.[0];if(!r?.claimed)return false;
+  toast(`Wise Old Man reward: +${Number(r.reward_gp).toLocaleString('en-GB')} GP!`,5000);
+  wiseTaskState=await fetchWiseTask();renderWiseTask();return true;
+}
+async function checkWiseTaskProgress(autoClaim=false){
+  if(wiseTaskChecking||!character)return;wiseTaskChecking=true;
+  try{const latest=await fetchWiseTask();if(!latest)return;wiseTaskState=latest;renderWiseTask();if(autoClaim&&latest.can_claim)await claimWiseTask(true)}finally{wiseTaskChecking=false}
+}
 
 async function openPlayerStats(username) {
   $('playerStatsTitle').textContent = String(username).toUpperCase();
@@ -1316,7 +1838,17 @@ document.querySelectorAll('.slayer-difficulty-choice').forEach(button => button.
 $('combatStart').onclick = startCombatGame;
 $('openSailing').onclick = openSailingGame;
 $('openRunecrafting').onclick = openRunecrafting;
+$('openWiseTask').onclick = openWiseTask;
+$('openBank').onclick = openBank;
+$('openGrandExchange').onclick = openGrandExchange;
+$('geSearchButton').onclick = searchGeItems;
+$('geSearch').addEventListener('input',()=>{clearTimeout(geSearchTimer);geSearchTimer=setTimeout(searchGeItems,260)});
+$('geSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchGeItems()}});
+$('wiseGetTask').onclick = requestWiseTask;
+$('wiseClaimTask').onclick = () => claimWiseTask(false);
 $('rcCreateRoom').onclick = createRcRoom;
+$('rcPlayComputer').onclick = playRcComputer;
+document.querySelectorAll('.rc-ai-choice').forEach(b=>b.onclick=()=>selectRcAiDifficulty(b.dataset.ai));
 $('rcJoinRoom').onclick = joinRcRoom;
 $('rcLeaveRoom').onclick = leaveRcRoom;
 $('rcRematch').onclick = rcRematch;
@@ -1329,6 +1861,14 @@ $('jadStart').onclick = startJadFight;
 $('prayRanged').onclick = () => selectJadPrayer('ranged');
 $('prayMagic').onclick = () => selectJadPrayer('magic');
 $('agilityStart').onclick = startAgilityGame;
+$('chooseDash').onclick = () => setAgilityMode('dash');
+$('chooseGnomeBall').onclick = () => setAgilityMode('gnomeball');
+$('gnomeBallStart').onclick = startGnomeBall;
+const gnomeCanvas = $('gnomeBallCanvas');
+gnomeCanvas.addEventListener('pointerdown', gnomeBallDown);
+gnomeCanvas.addEventListener('pointermove', gnomeBallMove);
+gnomeCanvas.addEventListener('pointerup', gnomeBallUp);
+gnomeCanvas.addEventListener('pointercancel', gnomeBallUp);
 $('openSkills').onclick = openSkills;
 $('openLeaderboard').onclick = openLeaderboard;
 $('changeCharacter').onclick = async () => {
@@ -1376,7 +1916,7 @@ $('characterForm').onsubmit = async (event) => {
 
 document.querySelectorAll('[data-close]').forEach(button => {
   button.onclick = () => {
-    if (button.dataset.close === 'agilityDialog') resetAgilityGame();
+    if (button.dataset.close === 'agilityDialog') { resetAgilityGame(); stopGnomeBall(false); }
     if (button.dataset.close === 'slayerDialog') resetJadSimulator();
     if (button.dataset.close === 'combatDialog') resetCombatGame();
     if (button.dataset.close === 'sailingDialog') resetSailingGame();
@@ -1421,3 +1961,64 @@ loadCount();
 loadCharacter();
 
 window.addEventListener('keydown',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;if(sailingRunning&&[' ','ArrowUp','w'].includes(k)){e.preventDefault();if(!e.repeat)sailingJump();if(sailingState)sailingState.held=true;}});window.addEventListener('keyup',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;if([' ','ArrowUp','w'].includes(k))sailingRelease();});const sailCanvas=$('sailingCanvas');sailCanvas.addEventListener('pointerdown',e=>{if(sailingRunning){e.preventDefault();sailingJump();if(sailingState)sailingState.held=true;}});sailCanvas.addEventListener('pointerup',sailingRelease);sailCanvas.addEventListener('pointercancel',sailingRelease);document.querySelectorAll('[data-sail]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();sailingJump();if(sailingState)sailingState.held=true;});b.addEventListener('pointerup',sailingRelease);b.addEventListener('pointercancel',sailingRelease);b.addEventListener('pointerleave',sailingRelease);});
+
+// Homepage character shift: three recognisable characters rotate every 1 minute.
+(() => {
+  const gamer = document.getElementById('gamer');
+  const monitor = document.getElementById('characterMonitor');
+  if (!gamer) return;
+  const variants = [
+    { className: 'character-one', monitorClass: 'monitor-toa', monitorLabel: 'Character 1 playing Tombs of Amascut in Old School RuneScape', label: 'Brown-haired character in a brown jumper smoking a hand-rolled joint while playing Tombs of Amascut' },
+    { className: 'character-two', monitorClass: 'monitor-stellaris', monitorLabel: 'Character 2 playing Stellaris', label: 'Pale-skinned character in a white outfit with a green cape holding a Dr Pepper while playing Stellaris' },
+    { className: 'character-three', monitorClass: 'monitor-isaac', monitorLabel: 'Character 3 playing The Binding of Isaac', label: 'Pale-skinned purple wizard with a blue wizard hat eating quiche while playing The Binding of Isaac' }
+  ];
+  const SHIFT_MS = 60000;
+  const WALK_MS = 3200;
+  let index = 0;
+  let timer;
+
+  function applyCharacter(nextIndex) {
+    gamer.classList.remove('character-one','character-two','character-three');
+    gamer.classList.add(variants[nextIndex].className);
+    gamer.setAttribute('aria-label', variants[nextIndex].label);
+    if (monitor) {
+      monitor.classList.remove('monitor-toa','monitor-stellaris','monitor-isaac');
+      monitor.classList.add(variants[nextIndex].monitorClass);
+      monitor.setAttribute('aria-label', variants[nextIndex].monitorLabel);
+    }
+  }
+
+  function scheduleShift() {
+    clearTimeout(timer);
+    timer = setTimeout(changeShift, SHIFT_MS);
+  }
+
+  function changeShift() {
+    gamer.classList.remove('typing','entering');
+    gamer.classList.add('leaving');
+    setTimeout(() => {
+      index = (index + 1) % variants.length;
+      applyCharacter(index);
+      gamer.classList.remove('leaving');
+      // Force animation restart after swapping character.
+      void gamer.offsetWidth;
+      gamer.classList.add('entering');
+      setTimeout(() => {
+        gamer.classList.remove('entering');
+        gamer.classList.add('typing');
+        scheduleShift();
+      }, WALK_MS);
+    }, WALK_MS);
+  }
+
+  applyCharacter(index);
+  gamer.classList.add('typing');
+  scheduleShift();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearTimeout(timer);
+    else scheduleShift();
+  });
+})();
+
+window.addEventListener('load',startRoamingPets);

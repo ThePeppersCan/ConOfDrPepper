@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Repo Company</title>
-  <link rel="stylesheet" href="style.css?v=repo-runepool-potted-1">
+  <link rel="stylesheet" href="style.css?v=repo-wise-task-fix-2">
 </head>
 <body>
 <header>
@@ -26,15 +26,15 @@
     <div id="count">0</div>
     <p id="status">The XP waste has only just begun.</p>
     <div class="bar"><i id="fill"></i></div>
-    <div class="row"><span>Waste goal</span><b id="percent">0.00%</b></div>
-    <ul><li>1,000 — Bankstanding enthusiast</li><li>5,000 — Productivity abandoned</li><li>10,000 — Serious XP negligence</li><li>25,000 — Grandmaster of wasted time</li></ul>
+    <div class="row"><span>Next waste rank</span><b id="percent">1,000 next</b></div>
+    <ul><li>1,000 — Bankstanding enthusiast</li><li>5,000 — Productivity abandoned</li><li>10,000 — Serious XP negligence</li><li>25,000 — Repo veteran</li><li>50,000 — Waste master</li><li>100,000+ — Unlimited eternal bankstanding</li></ul>
   </section>
 
   <section id="scene" class="scene">
     <div class="poster p1">OLD SCHOOL</div><div class="poster p2">REPO COMPANY</div>
-    <div class="monitor"><div class="screen"><div class="minimap"></div><div class="player"></div><div class="chat">Another perfectly good XP tick wasted...</div></div><div class="stand"></div></div>
+    <div class="monitor"><div id="characterMonitor" class="screen game-screen monitor-toa" aria-label="Character 1 playing Tombs of Amascut"><div class="monitor-game monitor-game-toa"><div class="game-title">TOMBS OF AMASCUT</div><div class="toa-room"><i class="toa-pillar p-a"></i><i class="toa-pillar p-b"></i><i class="toa-boss"></i><i class="toa-player"></i><i class="toa-hit">42</i></div><div class="toa-inventory"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="game-status">WARDENS · EXPERT MODE</div></div><div class="monitor-game monitor-game-stellaris"><div class="stellaris-top"><b>STELLARIS</b><span>⚡ 8K&nbsp;&nbsp;◆ 14K&nbsp;&nbsp;☄ 2K</span></div><div class="galaxy"><i class="orbit o1"></i><i class="orbit o2"></i><i class="orbit o3"></i><i class="star s1"></i><i class="star s2"></i><i class="star s3"></i><i class="fleet f1">▸▸▸</i><i class="fleet f2">▸▸</i></div><div class="stellaris-panel">UNITED EARTH FLEET<br><span>Surveying unknown system…</span></div></div><div class="monitor-game monitor-game-isaac"><div class="isaac-title">THE BINDING OF ISAAC</div><div class="isaac-room"><i class="isaac-heart">♥♥♡</i><i class="isaac-boy"><b></b></i><i class="isaac-tear t1"></i><i class="isaac-tear t2"></i><i class="isaac-enemy e1"></i><i class="isaac-enemy e2"></i></div><div class="isaac-floor">BASEMENT II · 03:17</div></div></div><div class="stand"></div></div>
     <div class="desk"></div><div class="keyboard"></div><div class="chair"><div class="back"></div><div class="seat"></div><div class="base"></div></div>
-    <div id="gamer" class="gamer"><div class="hairback"></div><div class="head"><div class="ear"></div><div class="nose"></div></div><div class="curls"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="neck"></div><div class="body"></div><div class="belly"></div><div class="arm"><div class="hand"></div></div><div class="leg one"></div><div class="leg two"></div></div>
+    <div id="gamer" class="gamer character-one typing" aria-label="Character typing at the computer"><div class="cape"></div><div class="hairback"></div><div class="wizard-hat"><i></i></div><div class="hood"></div><div class="head"><div class="ear"></div><div class="nose"></div><div class="face-shadow"></div></div><div class="curls"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="neck"></div><div class="body"><div class="robe-panel"></div></div><div class="belly"></div><div class="arm arm-left"><div class="hand"></div></div><div class="arm arm-right"><div class="hand"><div class="character-prop joint-prop" aria-hidden="true"><span class="joint-stick"></span><span class="smoke smoke-one"></span><span class="smoke smoke-two"></span><span class="smoke smoke-three"></span></div><div class="character-prop pepper-prop" aria-hidden="true"><span class="can-top"></span><b>Dr<br>Pepper</b></div><div class="character-prop quiche-prop" aria-hidden="true"><span class="quiche-crust"></span><span class="quiche-filling"><i></i><i></i><i></i></span><b>QUICHE</b></div></div></div><div class="leg one"></div><div class="leg two"></div></div>
     <div id="level" class="level">WASTE RANK: BEGINNER</div>
     <div id="resourceLayer" class="resource-layer" aria-live="polite"></div>
   </section>
@@ -54,6 +54,9 @@
   <button id="openCombat" class="combat-open-button" disabled><span aria-hidden="true">⚔</span>LEVEL COMBAT</button>
   <button id="openSailing" class="sailing-open-button" disabled><img src="assets/sailing-icon.webp" alt="" width="24" height="24">LEVEL SAILING</button>
   <button id="openRunecrafting" class="runecrafting-open-button" disabled><img src="assets/runecrafting-icon.png" alt="" width="24" height="24">LEVEL RUNECRAFTING</button>
+  <button id="openWiseTask" class="wise-task-open-button"><img src="assets/wise-old-man.png" alt="" width="28" height="28"><span>WISE OLD MAN<br>TASK</span><b id="wiseTaskBadge" class="wise-task-badge hidden">!</b></button>
+  <button id="openBank" class="bank-open-button"><img src="assets/gold-pieces.png" alt="" width="28" height="28"><span>BANK</span></button>
+  <button id="openGrandExchange" class="ge-open-button"><span class="ge-button-icon" aria-hidden="true">GE</span><span>GRAND EXCHANGE</span></button>
   <button id="openSkills" disabled>SKILLS &amp; LOG</button>
   <button id="openLeaderboard">LEADERBOARD</button>
 </section>
@@ -63,6 +66,9 @@
 <div id="toast" class="toast" role="status"></div>
 
 <dialog id="dialog"><h3>Reset all wasted XP clicks?</h3><p>This resets the shared tally for everyone.</p><form method="dialog"><button value="cancel">Cancel</button><button id="confirm" value="confirm" class="danger">Reset tally</button></form></dialog>
+
+
+<div id="roamingPets" class="roaming-pets" aria-live="off" aria-hidden="true"></div>
 
 <dialog id="characterDialog" class="game-dialog">
   <button class="dialog-x" data-close="characterDialog" aria-label="Close">×</button>
@@ -82,6 +88,69 @@
   </form>
 </dialog>
 
+
+<dialog id="bankDialog" class="game-dialog bank-dialog">
+  <button class="dialog-x" data-close="bankDialog" aria-label="Close">×</button>
+  <div class="bank-heading">
+    <img src="assets/gold-pieces.png" alt="Gold pieces">
+    <div><h3>REPO COMPANY BANK</h3><p>Your personal currency and future shop purchases are stored here.</p></div>
+  </div>
+  <section class="bank-balance-panel">
+    <span>GOLD PIECES</span>
+    <strong id="bankGp">0 GP</strong>
+  </section>
+  <section class="bank-pet-panel"><div><b>ACTIVE PET</b><small>Only one pet can follow you at a time.</small></div><strong id="bankActivePet">No pet out</strong><button id="bankPutPetAway" type="button">PUT AWAY</button></section>
+  <div class="bank-section-title"><b>BANK ITEMS</b><small>Purchased pets and future shop items appear here.</small></div>
+  <div id="bankItems" class="bank-grid" aria-live="polite"></div>
+  <small id="bankMessage" class="bank-message">Loading your bank…</small>
+</dialog>
+
+
+<dialog id="grandExchangeDialog" class="game-dialog ge-dialog">
+  <button class="dialog-x" data-close="grandExchangeDialog" aria-label="Close">×</button>
+  <header class="ge-heading">
+    <div class="ge-logo" aria-hidden="true">GE</div>
+    <div><h3>GRAND EXCHANGE</h3><p>Search the Repo Company market and purchase items using your personal Gold pieces.</p></div>
+  </header>
+  <section class="ge-wallet">
+    <img src="assets/gold-pieces.png" alt="Gold pieces">
+    <span>AVAILABLE GOLD</span>
+    <strong id="geGp">0 GP</strong>
+  </section>
+  <label class="ge-search-label" for="geSearch">ITEM SEARCH</label>
+  <div class="ge-search-row">
+    <input id="geSearch" type="search" maxlength="60" autocomplete="off" placeholder="Search for an item…">
+    <button id="geSearchButton" type="button">SEARCH</button>
+  </div>
+  <div class="ge-market-frame">
+    <div class="ge-column-head"><span>ITEM</span><span>PRICE</span><span>BUY</span></div>
+    <div id="geResults" class="ge-results" aria-live="polite"></div>
+  </div>
+  <small id="geMessage" class="ge-message">The market is loading…</small>
+</dialog>
+
+<dialog id="wiseTaskDialog" class="game-dialog wise-task-dialog">
+  <button class="dialog-x" data-close="wiseTaskDialog" aria-label="Close">×</button>
+  <div class="wise-task-heading">
+    <img src="assets/wise-old-man.png" alt="Wise Old Man">
+    <div><h3>WISE OLD MAN TASK</h3><p>Complete a training assignment to earn personal Gold pieces.</p></div>
+  </div>
+  <div class="wise-wallet"><img src="assets/gold-pieces.png" alt=""><span>Your balance</span><strong id="wiseGp">0 GP</strong></div>
+  <section id="wiseNoTask" class="wise-task-empty">
+    <p>The Wise Old Man has a realistic training job ready for you.</p>
+    <button id="wiseGetTask" type="button">ASK FOR A TASK</button>
+  </section>
+  <section id="wiseActiveTask" class="wise-active-task hidden">
+    <span class="wise-scroll-label">CURRENT ASSIGNMENT</span>
+    <h4 id="wiseTaskTitle">Train a skill</h4>
+    <p id="wiseTaskText"></p>
+    <div class="wise-progress"><i id="wiseTaskFill"></i></div>
+    <div class="wise-task-numbers"><span id="wiseTaskProgress">0 / 0 XP</span><strong id="wiseTaskReward">0 GP</strong></div>
+    <button id="wiseClaimTask" type="button" class="hidden">CLAIM REWARD</button>
+    <small id="wiseTaskMessage">Earn the XP in the matching Repo Company level.</small>
+  </section>
+</dialog>
+
 <dialog id="skillsDialog" class="game-dialog wide">
   <button class="dialog-x" data-close="skillsDialog" aria-label="Close">×</button>
   <h3 id="skillsTitle">CHARACTER</h3>
@@ -93,8 +162,13 @@
 
 <dialog id="agilityDialog" class="game-dialog agility-dialog">
   <button class="dialog-x" data-close="agilityDialog" aria-label="Close">×</button>
-  <h3>REPO XP RUSH</h3>
-  <p>Race across the arena and collect 15 glowing XP drops. The faster you collect them, the more Agility XP you earn.</p>
+  <h3>LEVEL AGILITY</h3>
+  <p>Choose an Agility game. Dash for fast reactions, or build a huge consecutive scoring streak in Gnome Ball.</p>
+  <div class="agility-game-picker" aria-label="Choose Agility game">
+    <button id="chooseDash" type="button" class="agility-game-choice selected"><strong>REPO XP RUSH</strong><small>Click 15 XP drops as quickly as possible.</small></button>
+    <button id="chooseGnomeBall" type="button" class="agility-game-choice"><strong>GNOME BALL</strong><small>Throw upwards through the hoop. It starts easy, then moves and shrinks as your streak grows.</small></button>
+  </div>
+  <section id="dashGamePanel" class="agility-game-panel">
   <div class="agility-stats">
     <span>Target <b id="agilityProgress">0 / 15</b></span>
     <span>Time <b id="agilityTime">0.00s</b></span>
@@ -110,6 +184,25 @@
   <section class="dash-leaderboard-section">
     <h4>FASTEST DASHES</h4>
     <div id="agilityLeaderboard" class="leaderboard compact">Loading...</div>
+  </section>
+  </section>
+
+  <section id="gnomeBallPanel" class="agility-game-panel hidden">
+    <div class="gnomeball-stats">
+      <span>Streak <b id="gnomeBallStreak">0</b></span>
+      <span>Best <b id="gnomeBallBest">0</b></span>
+      <span>Level <b id="gnomeBallLevel">1</b></span>
+      <span>Lives <b id="gnomeBallLives">● ● ●</b></span>
+    </div>
+    <div class="gnomeball-wrap">
+      <canvas id="gnomeBallCanvas" width="760" height="430" aria-label="Gnome Ball throwing game"></canvas>
+      <button id="gnomeBallStart" type="button">START GNOME BALL</button>
+    </div>
+    <small id="gnomeBallMessage" class="agility-message">Drag the Gnome Ball down, then release to throw it upwards through the hoop.</small>
+    <section class="dash-leaderboard-section">
+      <h4>LONGEST GNOME BALL STREAKS</h4>
+      <div id="gnomeBallLeaderboard" class="leaderboard compact">Loading...</div>
+    </section>
   </section>
 </dialog>
 
@@ -172,12 +265,14 @@
         <button type="button" class="combat-location-choice selected" data-location="lumbridge" aria-pressed="true"><strong>LUMBRIDGE</strong><small>Goblin, cow and skeleton hordes</small></button>
         <button type="button" class="combat-location-choice" data-location="fight-caves" aria-pressed="false"><strong>FIGHT CAVES</strong><small>Tz-Kih, Tz-Kek and Tok-Xil</small></button>
         <button type="button" class="combat-location-choice" data-location="gauntlet" aria-pressed="false"><strong>CORRUPTED GAUNTLET</strong><small>Corrupted beasts and Hunllef</small></button>
+        <button type="button" class="combat-location-choice inferno-choice" data-location="inferno" aria-pressed="false"><strong>INFERNO</strong><small>One huge boss · dodge moving fire walls</small></button>
       </div>
       <b class="combat-option-title">CHOOSE DIFFICULTY</b>
       <div class="combat-difficulty-grid" aria-label="Choose combat difficulty">
-        <button type="button" class="combat-difficulty-choice" data-difficulty="easy" aria-pressed="false"><strong>EASY</strong><small>Slower enemies · 75% XP</small></button>
-        <button type="button" class="combat-difficulty-choice selected" data-difficulty="medium" aria-pressed="true"><strong>MEDIUM</strong><small>Original difficulty · 100% XP</small></button>
-        <button type="button" class="combat-difficulty-choice" data-difficulty="hard" aria-pressed="false"><strong>HARD</strong><small>Relentless enemies · 140% XP</small></button>
+        <button type="button" class="combat-difficulty-choice" data-difficulty="easy" aria-pressed="false"><strong>EASY · 1 MIN</strong><small>Forgiving pace · 75% reward rate</small></button>
+        <button type="button" class="combat-difficulty-choice selected" data-difficulty="medium" aria-pressed="true"><strong>MEDIUM · 2 MIN</strong><small>Balanced survival · 110% reward rate</small></button>
+        <button type="button" class="combat-difficulty-choice" data-difficulty="hard" aria-pressed="false"><strong>HARD · 3 MIN</strong><small>Faster hordes · 155% reward rate</small></button>
+        <button type="button" class="combat-difficulty-choice insane-choice" data-difficulty="insane" aria-pressed="false"><strong>INSANE · 4 MIN</strong><small>Close to impossible · 235% reward rate</small></button>
       </div>
       <button id="combatStart" type="button">START RUN</button>
     </div>
@@ -192,7 +287,7 @@
     <button type="button" data-move="down">▼</button>
     <button type="button" data-move="right">▶</button>
   </div>
-  <small id="combatMessage" class="combat-message">Complete the minute for the best Attack, Strength and Defence XP reward.</small>
+  <small id="combatMessage" class="combat-message">Longer and harder tiers give much better Attack, Strength and Defence XP.</small>
 </dialog>
 
 
@@ -219,13 +314,23 @@
 <dialog id="runecraftingDialog" class="game-dialog runecrafting-dialog">
   <button class="dialog-x" data-close="runecraftingDialog" aria-label="Close">×</button>
   <h3>RUNECRAFTING POOL</h3>
-  <p>Classic two-player pool: red Fire runes versus yellow Chaos runes. Clear your seven runes, then pot the black Wrath rune to win.</p>
+  <p>Play classic rune pool online or against the Wise Pool Computer. Clear your seven runes, then pot the black Wrath rune to win.</p>
   <div id="rcLobby" class="rc-lobby">
+    <div class="rc-single-panel">
+      <b>SINGLE PLAYER</b>
+      <div class="rc-ai-grid" aria-label="Computer difficulty">
+        <button type="button" class="rc-ai-choice" data-ai="easy"><strong>EASY</strong><small>Loose aim and gentle power</small></button>
+        <button type="button" class="rc-ai-choice selected" data-ai="medium"><strong>MEDIUM</strong><small>Capable, but makes mistakes</small></button>
+        <button type="button" class="rc-ai-choice" data-ai="hard"><strong>HARD</strong><small>Accurate angles and strong shots</small></button>
+      </div>
+      <button id="rcPlayComputer" type="button">PLAY COMPUTER</button>
+    </div>
+    <div class="rc-online-divider"><span>OR PLAY ONLINE</span></div>
     <div class="rc-lobby-actions">
-      <button id="rcCreateRoom" type="button">CREATE MATCH</button>
+      <button id="rcCreateRoom" type="button">CREATE ONLINE MATCH</button>
       <div><label for="rcRoomCode">Room code</label><input id="rcRoomCode" maxlength="6" autocomplete="off" placeholder="ABC123"><button id="rcJoinRoom" type="button">JOIN MATCH</button></div>
     </div>
-    <small id="rcLobbyMessage">Both players must be logged into a Repo Company account.</small>
+    <small id="rcLobbyMessage">Single player needs no room code. Online mode requires two logged-in accounts.</small>
   </div>
   <div id="rcGame" class="hidden">
     <div class="rc-hud"><span>Room <b id="rcCodeLabel">—</b></span><span>You <b id="rcPlayerLabel">—</b></span><span>Turn <b id="rcTurnLabel">—</b></span><span>Colour <b id="rcSetLabel">Unassigned</b></span></div>
@@ -257,6 +362,6 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="script.js?v=repo-runepool-potted-1"></script>
+<script src="script.js?v=ge-gnome-save-1-repo-ai-inferno-1"></script>
 </body>
 </html>
