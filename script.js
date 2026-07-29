@@ -34,6 +34,7 @@ const combatKeys = new Set();
 let selectedCombatWeapon = 'sword';
 let selectedCombatDifficulty = 'medium';
 let selectedCombatLocation = 'lumbridge';
+let miningAfkState=null,miningAfkPoll=null,miningChatTimer=null,miningLivePoll=null;
 let selectedRcAiDifficulty = 'medium';
 let rcAiTimer = null;
 let selectedSlayerDifficulty = 'medium';
@@ -197,6 +198,8 @@ function nextWasteMilestone(v) {
   return { start, next, progress: Math.max(0, Math.min(1, (v - start) / (next - start))) };
 }
 
+const MAX_SKILL_XP = 13034431;
+
 function xpForLevel(level) {
   let points = 0;
   for (let i = 1; i < level; i++) points += Math.floor(i + 300 * Math.pow(2, i / 7));
@@ -204,7 +207,8 @@ function xpForLevel(level) {
 }
 
 function levelFromXp(xp) {
-  for (let level = 2; level <= 99; level++) if (xp < xpForLevel(level)) return level - 1;
+  const cappedXp = Math.max(0, Math.min(MAX_SKILL_XP, Number(xp) || 0));
+  for (let level = 2; level <= 99; level++) if (cappedXp < xpForLevel(level)) return level - 1;
   return 99;
 }
 
@@ -265,9 +269,12 @@ function renderCharacter() {
   $('openSlayer').disabled = !hasCharacter;
   $('openCombat').disabled = !hasCharacter;
   $('openSailing').disabled = !hasCharacter;
+  $('openMining').disabled = false;
   $('openRunecrafting').disabled = !hasCharacter;
   $('openBank').disabled = false;
   $('openGrandExchange').disabled = false;
+  $('openPetWars').disabled = false;
+  $('openQuests').disabled = false;
   // Keep the Wise Old Man button clickable so it cannot get stuck greyed out.
   $('openWiseTask').disabled = false;
   if (!hasCharacter) {
@@ -275,10 +282,22 @@ function renderCharacter() {
     return;
   }
 
-  const total = levelFromXp(character.woodcutting_xp) + levelFromXp(character.mining_xp) + levelFromXp(character.fishing_xp) + levelFromXp(character.agility_xp || 0) + levelFromXp(character.slayer_xp || 0) + levelFromXp(character.attack_xp || 0) + levelFromXp(character.strength_xp || 0) + levelFromXp(character.defence_xp || 0) + levelFromXp(character.sailing_xp || 0) + levelFromXp(character.runecrafting_xp || 0);
+  const total = levelFromXp(character.woodcutting_xp) + levelFromXp(character.mining_xp) + levelFromXp(character.fishing_xp) + levelFromXp(character.agility_xp || 0) + levelFromXp(character.slayer_xp || 0) + levelFromXp(character.attack_xp || 0) + levelFromXp(character.strength_xp || 0) + levelFromXp(character.defence_xp || 0) + levelFromXp(character.sailing_xp || 0) + levelFromXp(character.runecrafting_xp || 0) + levelFromXp(character.cooking_xp || 0);
   $('characterName').textContent = character.username;
   $('totalLevel').textContent = total;
   queueWiseTaskCheck();
+  keepCoreAdventureButtonsEnabled();
+}
+
+function keepCoreAdventureButtonsEnabled() {
+  ['openMining','openQuests'].forEach(id => {
+    const button = $(id);
+    if (!button) return;
+    button.disabled = false;
+    button.removeAttribute('disabled');
+    button.setAttribute('aria-disabled', 'false');
+    button.classList.remove('is-disabled');
+  });
 }
 
 function usernameToEmail(username) {
@@ -305,6 +324,7 @@ async function loadCharacter() {
     return;
   }
   character = data?.[0] || null;
+  if(character) await loadQuestProfile();
   renderCharacter();
   scheduleSpawn();
 }
@@ -455,6 +475,8 @@ function openSkills() {
   const rcLvl = levelFromXp(rcXp), rcPrev=xpForLevel(rcLvl), rcNext=rcLvl===99?rcXp:xpForLevel(rcLvl+1);
   const rcPct=rcLvl===99?100:Math.max(0,Math.min(100,((rcXp-rcPrev)/(rcNext-rcPrev))*100));
   $('skillsGrid').insertAdjacentHTML('beforeend', `<div class="skill-card runecrafting"><img class="rc-skill-icon" src="assets/runecrafting-icon.png" alt=""><div><b>Runecrafting</b><strong>${rcLvl}</strong><small>${rcXp.toLocaleString('en-GB')} XP</small><i><span style="width:${rcPct}%"></span></i></div></div>`);
+  const cookingXp=Number(character.cooking_xp)||0,cookingLvl=levelFromXp(cookingXp),cookingPrev=xpForLevel(cookingLvl),cookingNext=cookingLvl===99?cookingXp:xpForLevel(cookingLvl+1),cookingPct=cookingLvl===99?100:Math.max(0,Math.min(100,((cookingXp-cookingPrev)/(cookingNext-cookingPrev))*100));
+  $('skillsGrid').insertAdjacentHTML('beforeend', `<div class="skill-card cooking"><img src="assets/cooking-icon.svg" alt="Cooking"><div><b>Cooking</b><strong>${cookingLvl}</strong><small>${cookingXp.toLocaleString('en-GB')} XP</small><i><span style="width:${cookingPct}%"></span></i></div></div>`);
 
   const unlocked = new Set(character.collection || []);
   $('collectionGrid').innerHTML = COLLECTIBLES.map(([id, label]) => `<div class="collectible ${unlocked.has(id) ? 'found' : ''}"><span>${unlocked.has(id) ? '◆' : '?'}</span>${label}</div>`).join('');
@@ -1441,16 +1463,26 @@ function freshRcBalls(){
 }
 function defaultRcState(host){return{balls:freshRcBalls(),turn:1,groups:{1:0,2:0},status:'waiting',winner:0,players:{1:host,2:null},revision:1,shot_active:false,shot_by:0,message:'Waiting for player two…'}}
 function selectRcAiDifficulty(type){if(!['easy','medium','hard'].includes(type))return;selectedRcAiDifficulty=type;document.querySelectorAll('.rc-ai-choice').forEach(b=>b.classList.toggle('selected',b.dataset.ai===type));}
-function playRcComputer(){const state=defaultRcState(character.username);state.players[2]=`Computer (${selectedRcAiDifficulty})`;state.status='playing';state.message=`${character.username} breaks first.`;rcRoom={id:null,code:'SOLO',state,slot:1,isComputer:true,aiDifficulty:selectedRcAiDifficulty};$('rcLobby').classList.add('hidden');$('rcGame').classList.remove('hidden');$('rcCodeLabel').textContent='SINGLE PLAYER';$('rcPlayerLabel').textContent=`P1 · ${character.username}`;startRcMusic();renderRcState();}
+function playRcComputer(){hideRcResult();const state=defaultRcState(character.username);state.players[2]=`Computer (${selectedRcAiDifficulty})`;state.status='playing';state.message=`${character.username} breaks first.`;rcRoom={id:null,code:'SOLO',state,slot:1,isComputer:true,aiDifficulty:selectedRcAiDifficulty};$('rcLobby').classList.add('hidden');$('rcGame').classList.remove('hidden');$('rcCodeLabel').textContent='SINGLE PLAYER';$('rcPlayerLabel').textContent=`P1 · ${character.username}`;startRcMusic();renderRcState();}
 function rcCode(){return Math.random().toString(36).slice(2,8).toUpperCase()}
 function startRcMusic(){const a=$('rcMusic');if(!a)return;a.volume=.42;a.currentTime=0;const play=a.play();if(play?.catch)play.catch(()=>{})}
 function stopRcMusic(){const a=$('rcMusic');if(!a)return;a.pause();a.currentTime=0}
 async function openRunecrafting(){if(!character)return;$('runecraftingDialog').showModal();$('rcLobby').classList.remove('hidden');$('rcGame').classList.add('hidden');$('rcLobbyMessage').textContent='Create a match or join using a six-character room code.'}
 async function createRcRoom(){const code=rcCode(), state=defaultRcState(character.username);const {data,error}=await db.from('runecrafting_rooms').insert({code,host_user_id:(await db.auth.getUser()).data.user.id,host_name:character.username,state}).select().single();if(error){console.error(error);$('rcLobbyMessage').textContent='Could not create room. Run the Runecrafting Pool SQL update first.';return}await enterRcRoom(data,1)}
 async function joinRcRoom(){const code=$('rcRoomCode').value.trim().toUpperCase();if(code.length<4)return;const {data,error}=await db.from('runecrafting_rooms').select('*').eq('code',code).maybeSingle();if(error||!data){$('rcLobbyMessage').textContent='Room not found.';return}const uid=(await db.auth.getUser()).data.user.id;if(data.host_user_id===uid)return enterRcRoom(data,1);if(data.guest_user_id&&data.guest_user_id!==uid){$('rcLobbyMessage').textContent='That match already has two players.';return}let state=data.state;if(!data.guest_user_id){state.players[2]=character.username;state.status='playing';state.message=`${state.players[1]} breaks first.`;state.revision++;const res=await db.from('runecrafting_rooms').update({guest_user_id:uid,guest_name:character.username,state}).eq('id',data.id).select().single();if(res.error){$('rcLobbyMessage').textContent='Could not join this match.';return}return enterRcRoom(res.data,2)}await enterRcRoom(data,2)}
-async function enterRcRoom(room,slot){rcRoom={...room,slot};$('rcLobby').classList.add('hidden');$('rcGame').classList.remove('hidden');$('rcCodeLabel').textContent=room.code;$('rcPlayerLabel').textContent=`P${slot} · ${character.username}`;renderRcState();if(room.state.status==='playing')startRcMusic();clearInterval(rcPollTimer);rcPollTimer=setInterval(pollRcRoom,120)}
+async function enterRcRoom(room,slot){hideRcResult();rcRoom={...room,slot};$('rcLobby').classList.add('hidden');$('rcGame').classList.remove('hidden');$('rcCodeLabel').textContent=room.code;$('rcPlayerLabel').textContent=`P${slot} · ${character.username}`;renderRcState();if(room.state.status==='playing')startRcMusic();clearInterval(rcPollTimer);rcPollTimer=setInterval(pollRcRoom,120)}
 async function pollRcRoom(){if(!rcRoom||rcAnimating)return;const oldStatus=rcRoom.state?.status;const {data,error}=await db.from('runecrafting_rooms').select('*').eq('id',rcRoom.id).maybeSingle();if(error||!data)return;rcRoom={...data,slot:rcRoom.slot};if(oldStatus!=='playing'&&data.state.status==='playing')startRcMusic();if(data.state.status==='finished')stopRcMusic();renderRcState()}
-function renderRcState(){if(!rcRoom)return;const s=rcRoom.state;$('rcTurnLabel').textContent=s.status==='finished'?`Winner: P${s.winner}`:`P${s.turn} · ${s.players[s.turn]||'Waiting'}`;const g=s.groups[rcRoom.slot];$('rcSetLabel').textContent=g===1?'Red · Fire runes':g===2?'Yellow · Chaos runes':'Unassigned';$('rcMessage').textContent=s.message||'';$('rcRematch').classList.toggle('hidden',s.status!=='finished');renderRcPotted();drawRcTable()}
+function rcCompletionXp(){if(!rcRoom?.isComputer)return null;return {easy:500,medium:1000,hard:1500}[rcRoom.aiDifficulty]||1000}
+function hideRcResult(){const panel=$('rcResultScreen');if(panel)panel.classList.add('hidden')}
+function showRcResult(){
+  if(!rcRoom||rcRoom.state.status!=='finished')return;
+  const won=rcRoom.state.winner===rcRoom.slot,panel=$('rcResultScreen');if(!panel)return;
+  panel.classList.remove('hidden','victory','defeat');panel.classList.add(won?'victory':'defeat');
+  $('rcResultTitle').textContent=won?'VICTORY!':'DEFEAT';
+  $('rcResultSubtitle').textContent=won?'You cleared the table and claimed the Wrath rune.':'The other player claimed the Wrath rune first.';
+  const xp=rcCompletionXp();$('rcResultXp').textContent=xp?`+${xp.toLocaleString('en-GB')} RUNECRAFTING XP`:'MATCH COMPLETE';
+}
+function renderRcState(){if(!rcRoom)return;const s=rcRoom.state;$('rcTurnLabel').textContent=s.status==='finished'?`Winner: P${s.winner}`:`P${s.turn} · ${s.players[s.turn]||'Waiting'}`;const g=s.groups[rcRoom.slot];$('rcSetLabel').textContent=g===1?'Red · Fire runes':g===2?'Yellow · Chaos runes':'Unassigned';$('rcMessage').textContent=s.message||'';$('rcRematch').classList.toggle('hidden',s.status!=='finished');renderRcPotted();drawRcTable();if(s.status==='finished')showRcResult();else hideRcResult()}
 function renderRcPotted(){if(!rcRoom)return;const balls=rcRoom.state.balls.filter(b=>b.potted&&b.id!=='cue');const groups=[['rcPottedFire',1,'fire','assets/fire-rune.webp'],['rcPottedChaos',2,'chaos','assets/chaos-rune.png'],['rcPottedWrath',8,'wrath','assets/wrath-rune.png']];for(const [id,group,cls,src] of groups){const tray=$(id);if(!tray)continue;const count=balls.filter(b=>b.group===group).length;tray.innerHTML=count?Array.from({length:count},()=>`<span class="rc-potted-ball ${cls}"><img src="${src}" alt=""></span>`).join(''):'<span class="rc-potted-empty">None yet</span>'}}
 function drawRcBall(ctx,b){
   ctx.save();
@@ -1464,7 +1496,19 @@ function drawRcBall(ctx,b){
   }
   ctx.restore();
 }
-function drawRcTable(){const c=$('rcCanvas'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#10251c';ctx.fillRect(0,0,c.width,c.height);ctx.fillStyle='#3d2817';ctx.fillRect(8,8,c.width-16,c.height-16);ctx.fillStyle='#176044';ctx.fillRect(20,20,c.width-40,c.height-40);ctx.strokeStyle='#d3b36a';ctx.lineWidth=3;ctx.strokeRect(28,28,c.width-56,c.height-56);for(const [x,y] of RC_POCKETS){ctx.fillStyle='#050505';ctx.beginPath();ctx.arc(x,y,18,0,Math.PI*2);ctx.fill()}if(!rcRoom)return;for(const b of rcRoom.state.balls){if(!b.potted)drawRcBall(ctx,b)}if(rcAim){const cue=rcRoom.state.balls[0];ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cue.x,cue.y);ctx.lineTo(rcAim.x,rcAim.y);ctx.stroke()}}
+function rcRayHit(cue,nx,ny){
+  let max=900,hitBall=null;const balls=rcRoom?.state?.balls||[];
+  for(const b of balls){if(b===cue||b.potted)continue;const ox=b.x-cue.x,oy=b.y-cue.y,proj=ox*nx+oy*ny;if(proj<=0)continue;const side=Math.abs(ox*ny-oy*nx);if(side<=RC_R*2){const along=proj-Math.sqrt(Math.max(0,(RC_R*2)**2-side**2));if(along<max){max=along;hitBall=b}}}
+  const tx=nx>0?(726-cue.x)/nx:nx<0?(34-cue.x)/nx:Infinity,ty=ny>0?(396-cue.y)/ny:ny<0?(34-cue.y)/ny:Infinity;max=Math.min(max,tx>0?tx:Infinity,ty>0?ty:Infinity,900);return{distance:Math.max(0,max),ball:hitBall}
+}
+function drawRcAimGuide(ctx,cue){
+  const dx=cue.x-rcAim.x,dy=cue.y-rcAim.y,len=Math.hypot(dx,dy);if(len<2)return;const nx=dx/len,ny=dy/len,power=Number($('rcPower').value)/100,hit=rcRayHit(cue,nx,ny),guide=Math.min(hit.distance,120+Math.min(330,len*2.4)*power),endX=cue.x+nx*guide,endY=cue.y+ny*guide;
+  ctx.save();ctx.lineCap='round';ctx.setLineDash([8,7]);ctx.strokeStyle=`rgba(255,255,255,${.42+.42*power})`;ctx.lineWidth=2+power*1.5;ctx.beginPath();ctx.moveTo(cue.x+nx*15,cue.y+ny*15);ctx.lineTo(endX,endY);ctx.stroke();ctx.setLineDash([]);
+  const sideX=-ny,sideY=nx;ctx.fillStyle=`rgba(255,230,88,${.65+.3*power})`;ctx.beginPath();ctx.moveTo(endX+nx*9,endY+ny*9);ctx.lineTo(endX-nx*8+sideX*6,endY-ny*8+sideY*6);ctx.lineTo(endX-nx*8-sideX*6,endY-ny*8-sideY*6);ctx.closePath();ctx.fill();
+  if(hit.ball&&guide>=hit.distance-2){ctx.strokeStyle='rgba(255,230,88,.75)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(hit.ball.x,hit.ball.y,RC_R+5,0,Math.PI*2);ctx.stroke()}
+  ctx.strokeStyle='rgba(130,205,255,.8)';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(cue.x-nx*(18+power*42),cue.y-ny*(18+power*42));ctx.lineTo(cue.x-nx*15,cue.y-ny*15);ctx.stroke();ctx.restore();
+}
+function drawRcTable(){const c=$('rcCanvas'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#10251c';ctx.fillRect(0,0,c.width,c.height);ctx.fillStyle='#3d2817';ctx.fillRect(8,8,c.width-16,c.height-16);ctx.fillStyle='#176044';ctx.fillRect(20,20,c.width-40,c.height-40);ctx.strokeStyle='#d3b36a';ctx.lineWidth=3;ctx.strokeRect(28,28,c.width-56,c.height-56);for(const [x,y] of RC_POCKETS){ctx.fillStyle='#050505';ctx.beginPath();ctx.arc(x,y,18,0,Math.PI*2);ctx.fill()}if(!rcRoom)return;for(const b of rcRoom.state.balls){if(!b.potted)drawRcBall(ctx,b)}if(rcAim){const cue=rcRoom.state.balls[0];drawRcAimGuide(ctx,cue)}}
 function rcPointerPos(e){const r=$('rcCanvas').getBoundingClientRect();return{x:(e.clientX-r.left)*RC_W/r.width,y:(e.clientY-r.top)*RC_H/r.height}}
 function rcAimStart(e){if(!rcRoom||rcAnimating)return;const s=rcRoom.state;if(s.status!=='playing'||s.turn!==rcRoom.slot||s.shot_active)return;const cue=s.balls[0];if(cue.potted)return;const p=rcPointerPos(e);if(Math.hypot(p.x-cue.x,p.y-cue.y)<45){rcAim=p;$('rcCanvas').setPointerCapture(e.pointerId);drawRcTable()}}
 function rcAimMove(e){if(!rcAim)return;rcAim=rcPointerPos(e);drawRcTable()}
@@ -1511,28 +1555,129 @@ async function finishRcShot(potted,cuePotted){
   if(!error){rcRoom={...data,slot:rcRoom.slot};renderRcState()}
 }
 function queueRcComputerShot(){clearTimeout(rcAiTimer);if(!rcRoom?.isComputer||rcRoom.state.status!=='playing'||rcRoom.state.turn!==2)return;$('rcMessage').textContent=`${rcRoom.state.players[2]} is lining up a shot…`;rcAiTimer=setTimeout(takeRcComputerShot,{easy:1250,medium:850,hard:520}[rcRoom.aiDifficulty]);}
+function rcSegmentClear(ax,ay,bx,by,ignore=[]){
+  const vx=bx-ax,vy=by-ay,l2=vx*vx+vy*vy;if(l2<1)return false;
+  for(const b of rcRoom.state.balls){if(b.potted||ignore.includes(b))continue;const t=Math.max(0,Math.min(1,((b.x-ax)*vx+(b.y-ay)*vy)/l2));const x=ax+vx*t,y=ay+vy*t;if(Math.hypot(b.x-x,b.y-y)<RC_R*2.15)return false}
+  return true
+}
 function takeRcComputerShot(){
   if(!rcRoom?.isComputer||rcAnimating||rcRoom.state.turn!==2)return;
-  const s=rcRoom.state,cue=s.balls[0],group=s.groups[2];
+  const s=rcRoom.state,cue=s.balls[0],group=s.groups[2],diff=rcRoom.aiDifficulty;
   let targets=s.balls.filter(b=>!b.potted&&b.id!=='cue'&&(group?b.group===group:(b.group===1||b.group===2)));
-  if(group&&!targets.length)targets=s.balls.filter(b=>!b.potted&&b.group===8);
-  if(!targets.length)return;
-  const diff=rcRoom.aiDifficulty,accuracy={easy:0.30,medium:0.13,hard:0.045}[diff];
-  let best=null;
-  for(const t of targets){for(const [px,py] of RC_POCKETS){const score=Math.hypot(t.x-px,t.y-py)+Math.hypot(cue.x-t.x,cue.y-t.y)*.32;if(!best||score<best.score)best={t,px,py,score}}}
-  const t=best.t,tx=best.px-t.x,ty=best.py-t.y,tl=Math.hypot(tx,ty)||1;
-  const contactX=t.x-(tx/tl)*RC_R*2,contactY=t.y-(ty/tl)*RC_R*2;
-  let dx=contactX-cue.x,dy=contactY-cue.y,len=Math.hypot(dx,dy)||1;
-  const angle=(Math.random()-.5)*accuracy*2;const ca=Math.cos(angle),sa=Math.sin(angle),nx=(dx/len)*ca-(dy/len)*sa,ny=(dx/len)*sa+(dy/len)*ca;
-  const speed={easy:400,medium:520,hard:610}[diff]*(.86+Math.random()*.18);
-  cue.vx=nx*speed;cue.vy=ny*speed;s.shot_by=2;drawRcTable();runRcPhysics();
+  if(group&&!targets.length)targets=s.balls.filter(b=>!b.potted&&b.group===8);if(!targets.length)return;
+  const candidates=[];
+  for(const t of targets)for(const [px,py] of RC_POCKETS){
+    const pdx=px-t.x,pdy=py-t.y,pdist=Math.hypot(pdx,pdy)||1,ux=pdx/pdist,uy=pdy/pdist;
+    const gx=t.x-ux*RC_R*2.04,gy=t.y-uy*RC_R*2.04,cdist=Math.hypot(gx-cue.x,gy-cue.y);
+    if(gx<35||gx>725||gy<35||gy>395)continue;
+    const cueClear=rcSegmentClear(cue.x,cue.y,gx,gy,[cue,t]),pocketClear=rcSegmentClear(t.x,t.y,px,py,[t]);
+    if(!cueClear||!pocketClear)continue;
+    const inx=(t.x-cue.x)/(Math.hypot(t.x-cue.x,t.y-cue.y)||1),iny=(t.y-cue.y)/(Math.hypot(t.x-cue.x,t.y-cue.y)||1),cut=Math.acos(Math.max(-1,Math.min(1,inx*ux+iny*uy)));
+    const railPenalty=Math.min(t.x-34,726-t.x,t.y-34,396-t.y)<22?55:0;
+    candidates.push({t,px,py,gx,gy,score:cdist+pdist*.72+cut*165+railPenalty});
+  }
+  candidates.sort((a,b)=>a.score-b.score);let shot=candidates[0];
+  if(!shot){const t=targets.sort((a,b)=>Math.hypot(a.x-cue.x,a.y-cue.y)-Math.hypot(b.x-cue.x,b.y-cue.y))[0];shot={t,gx:t.x,gy:t.y,px:t.x,py:t.y,score:999}}
+  let dx=shot.gx-cue.x,dy=shot.gy-cue.y,len=Math.hypot(dx,dy)||1,nx=dx/len,ny=dy/len;
+  const angularError={easy:.105,medium:.038,hard:.012}[diff],mistakeChance={easy:.20,medium:.07,hard:.015}[diff];
+  let angle=(Math.random()-.5)*angularError*2;if(Math.random()<mistakeChance)angle+=(Math.random()<.5?-1:1)*angularError*(1.5+Math.random()*1.7);
+  const ca=Math.cos(angle),sa=Math.sin(angle);[nx,ny]=[nx*ca-ny*sa,nx*sa+ny*ca];
+  const total=len+Math.hypot(shot.px-shot.t.x,shot.py-shot.t.y),base=Math.min(660,330+total*.58),powerJitter={easy:.16,medium:.07,hard:.025}[diff];
+  const speed=base*(1+(Math.random()-.5)*powerJitter*2);cue.vx=nx*speed;cue.vy=ny*speed;s.shot_by=2;drawRcTable();runRcPhysics();
 }
-async function awardRcXp(won){const {data}=await db.rpc('complete_runecrafting_match',{p_won:won});const r=data?.[0];if(r){character.runecrafting_xp=Number(r.new_xp);renderCharacter();toast(`+${r.xp_gained} Runecrafting XP`,3500)}}
-async function rcRematch(){if(!rcRoom)return;const s=defaultRcState(rcRoom.state.players[1]);s.players=rcRoom.state.players;s.status=s.players[2]?'playing':'waiting';s.message=s.status==='playing'?`${s.players[1]} breaks first.`:'Waiting for player two…';if(rcRoom.isComputer){rcRoom.state=s;startRcMusic();renderRcState();return}const {data}=await db.from('runecrafting_rooms').update({state:s}).eq('id',rcRoom.id).select().single();if(data){rcRoom={...data,slot:rcRoom.slot};if(s.status==='playing')startRcMusic();renderRcState()}}
-function leaveRcRoom(){stopRcMusic();clearTimeout(rcAiTimer);clearInterval(rcPollTimer);rcPollTimer=null;rcRoom=null;rcAnimating=false;rcAim=null;$('rcGame').classList.add('hidden');$('rcLobby').classList.remove('hidden')}
+async function awardRcXp(won){const args={p_won:won,p_difficulty:rcRoom?.isComputer?(rcRoom.aiDifficulty||'medium'):'online'};const {data,error}=await db.rpc('complete_runecrafting_match_v2',args);if(error){console.error(error);toast('Run the updated Runecrafting SQL to enable the new XP rewards.',4500);return;}const r=data?.[0];if(r){character.runecrafting_xp=Number(r.new_xp);renderCharacter();toast(`+${r.xp_gained} Runecrafting XP`,3500)}}
+async function rcRematch(){if(!rcRoom)return;hideRcResult();const s=defaultRcState(rcRoom.state.players[1]);s.players=rcRoom.state.players;s.status=s.players[2]?'playing':'waiting';s.message=s.status==='playing'?`${s.players[1]} breaks first.`:'Waiting for player two…';if(rcRoom.isComputer){rcRoom.state=s;startRcMusic();renderRcState();return}const {data}=await db.from('runecrafting_rooms').update({state:s}).eq('id',rcRoom.id).select().single();if(data){rcRoom={...data,slot:rcRoom.slot};if(s.status==='playing')startRcMusic();renderRcState()}}
+function leaveRcRoom(){hideRcResult();stopRcMusic();clearTimeout(rcAiTimer);clearInterval(rcPollTimer);rcPollTimer=null;rcRoom=null;rcAnimating=false;rcAim=null;$('rcGame').classList.add('hidden');$('rcLobby').classList.remove('hidden')}
 
+
+
+const MINING_CHAT = [
+  'If Slayer got removed, half this clan would finally see daylight.',
+  'Do you think Trump would train Mining or just buy the star?',
+  'Someone said ladyboys are a random event. I think they need to log off.',
+  'I brought a dragon pickaxe. It is made of cardboard.',
+  'Seven minutes is basically tick-perfect AFK.',
+  'The star told me to buy more bank space.',
+  'I have been mining this for ten minutes and learned nothing.',
+  'Pet Wars is fixed. Probably. Do not quote me.',
+  'Imagine getting 99 Mining and still being unemployed.',
+  'They should remove Slayer and replace it with Quiche-making.'
+];
+function formatMiningTime(seconds){seconds=Math.max(0,Math.ceil(Number(seconds)||0));if(!seconds)return 'READY';return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`}
+function setMiningChats(){clearInterval(miningChatTimer);const bubbles=[...document.querySelectorAll('.fake-bubble')];const rotate=()=>{bubbles.forEach((b,i)=>{b.textContent=MINING_CHAT[(Math.floor(Math.random()*MINING_CHAT.length)+i)%MINING_CHAT.length];b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop')})};rotate();miningChatTimer=setInterval(rotate,8500)}
+function renderMiningState(){
+  if(!miningAfkState)return;
+  const petId=miningAfkState.active_pet,meta=PET_CATALOG[petId];
+  $('miningLocked').classList.toggle('hidden',Boolean(petId));$('miningGame').classList.toggle('hidden',!petId);
+  if(!petId)return;
+  const petName=miningAfkState.pet_name||meta?.name||'Your pet';
+  $('miningPet').querySelector('.mining-pet-visual').innerHTML=petMarkup(petId,petName,'star-pet-art');$('miningPet').dataset.petId=petId;$('miningPet').querySelector('.mining-pet-label').textContent=petName;
+  $('miningXp').textContent=Number(miningAfkState.mining_xp||0).toLocaleString('en-GB');$('miningGp').textContent=`${Number(miningAfkState.gp||0).toLocaleString('en-GB')} GP`;
+  const remaining=Number(miningAfkState.seconds_until_click)||0,active=Boolean(miningAfkState.active),degraded=Boolean(miningAfkState.degraded);
+  $('miningCooldown').textContent=active?formatMiningTime(remaining):(degraded?'DEGRADED':'READY');
+  $('mineStarButton').disabled=active;
+  $('mineStarButton').textContent=active?'PET IS MINING…':(degraded?'STRIKE A NEW STAR':'START 7-MINUTE CYCLE');
+  $('stopMiningButton').disabled=false;
+  $('miningGame').classList.toggle('is-active',active);
+  $('shootingStar').classList.toggle('degraded',degraded&&!active);
+  const cycleXp=Math.min(1500,Number(miningAfkState.cycle_xp)||0),cycleGp=Math.min(2500,Number(miningAfkState.cycle_gp)||0),progress=Math.min(100,Math.max(0,Number(miningAfkState.progress_percent)||0));
+  $('miningCycleXp').textContent=`${cycleXp.toLocaleString('en-GB')} / 1,500 XP`;
+  $('miningCycleGp').textContent=`${cycleGp.toLocaleString('en-GB')} / 2,500 GP`;
+  $('miningCycleFill').style.width=`${progress}%`;
+  $('miningMessage').textContent=active?'Your pet is mining automatically. XP and GP are being added throughout the seven-minute cycle. You can close this window and return later.':(degraded?'The star has degraded. Strike it once to begin another seven-minute cycle.':'Strike the star once. Your pet will mine for seven minutes without any more clicking.');
+}
+async function refreshMiningState(silent=false){if(!character)return;const{data,error}=await db.rpc('get_mining_afk_state');if(error){if(!silent)toast(error.message||'Shooting Star could not connect. Run update-shooting-star-7-minute-cycle.sql in Supabase.');console.warn('Mining state error:',error);return}miningAfkState=data?.[0]||null;if(miningAfkState){character.mining_xp=Number(miningAfkState.mining_xp)||0;character.gp=Number(miningAfkState.gp)||0}renderMiningState();renderCharacter()}
+async function refreshLiveStarMiners(){if(!$('liveStarMiners'))return;const{data,error}=await db.rpc('get_active_star_miners');if(error)return;const own=character?.username||'';const miners=(data||[]).filter(m=>m.username!==own);$('liveStarMiners').innerHTML=miners.map((m,i)=>{const meta=PET_CATALOG[m.active_pet]||PET_CATALOG.pet_free_cat;return `<div class="live-star-miner miner-${i%6}" data-pet-id="${escapeHtml(m.active_pet)}"><span>${escapeHtml(m.pet_name||meta.name)}<small>${escapeHtml(m.username)}</small></span>${petMarkup(m.active_pet,m.pet_name||meta.name,'star-pet-art')}<b class="live-pickaxe"><img src="assets/mining-icon.png" alt=""></b></div>`}).join('')}
+async function openMining(){if(!character){openAuth('login');return}$('miningDialog').showModal();await refreshMiningState();await refreshLiveStarMiners();setMiningChats();clearInterval(miningAfkPoll);clearInterval(miningLivePoll);miningAfkPoll=setInterval(()=>refreshMiningState(true),5000);miningLivePoll=setInterval(refreshLiveStarMiners,4000)}
+async function strikeShootingStar(){if(!character)return;const btn=$('mineStarButton');btn.disabled=true;const{data,error}=await db.rpc('mine_shooting_star');if(error){toast(error.message||'The star cannot be mined yet.');await refreshMiningState(true);return}miningAfkState=data?.[0]||null;if(miningAfkState){character.mining_xp=Number(miningAfkState.mining_xp)||0;character.gp=Number(miningAfkState.gp)||0}$('shootingStar').classList.remove('struck','degraded');void $('shootingStar').offsetWidth;$('shootingStar').classList.add('struck');renderMiningState();renderCharacter();refreshLiveStarMiners();toast('Seven-minute mining cycle started: 1,500 Mining XP and 2,500 GP will be earned gradually.',5000)}
+function stopShootingStar(){
+  clearInterval(miningAfkPoll); miningAfkPoll=null;
+  clearInterval(miningLivePoll); miningLivePoll=null;
+  clearInterval(miningChatTimer); miningChatTimer=null;
+  const dialog=$('miningDialog');
+  if(dialog?.open) dialog.close();
+  toast('You left the star. Your pet keeps mining and you can return at any time.');
+}
 
 const PET_CATALOG = {"pet_free_cat":{"name":"Repo cat","source":"Free starter pet","price":0,"image":"assets/pets/free_cat.svg"},"pet_abyssal_orphan":{"name":"Abyssal orphan","source":"Abyssal Sire","price":55000,"image":"assets/pets/abyssal_orphan.png"},"pet_baby_mole":{"name":"Baby mole","source":"Giant Mole","price":30000,"image":"assets/pets/baby_mole.png"},"pet_baron":{"name":"Baron","source":"Duke Sucellus","price":90000,"image":"assets/pets/baron.png"},"pet_bran":{"name":"Bran","source":"Royal Titans","price":85000,"image":"assets/pets/bran.png"},"pet_beef":{"name":"Beef","source":"Brutus","price":65000,"image":"assets/pets/beef.png"},"pet_butch":{"name":"Butch","source":"Vardorvis","price":95000,"image":"assets/pets/butch.png"},"pet_callisto_cub":{"name":"Callisto cub","source":"Callisto and Artio","price":70000,"image":"assets/pets/callisto_cub.png"},"pet_dom":{"name":"Dom","source":"Doom of Mokhaiotl","price":90000,"image":"assets/pets/dom.png"},"pet_gull":{"name":"Gull","source":"Shellbane Gryphon","price":60000,"image":"assets/pets/gull.png"},"pet_hellpuppy":{"name":"Hellpuppy","source":"Cerberus","price":70000,"image":"assets/pets/hellpuppy.png"},"pet_huberte":{"name":"Huberte","source":"The Hueycoatl","price":65000,"image":"assets/pets/huberte.png"},"pet_ikkle_hydra":{"name":"Ikkle hydra","source":"Alchemical Hydra","price":85000,"image":"assets/pets/ikkle_hydra.png"},"pet_jal_nib_rek":{"name":"Jal-nib-rek","source":"Inferno","price":250000,"image":"assets/pets/jal_nib_rek.png"},"pet_kalphite_princess":{"name":"Kalphite princess","source":"Kalphite Queen","price":55000,"image":"assets/pets/kalphite_princess.png"},"pet_lil_zik":{"name":"Lil' zik","source":"Theatre of Blood","price":175000,"image":"assets/pets/lil_zik.png"},"pet_lilviathan":{"name":"Lil'viathan","source":"The Leviathan","price":95000,"image":"assets/pets/lilviathan.png"},"pet_little_nightmare":{"name":"Little nightmare","source":"The Nightmare and Phosani's Nightmare","price":100000,"image":"assets/pets/little_nightmare.png"},"pet_maggot_marquess":{"name":"Maggot marquess","source":"Maggot King","price":65000,"image":"assets/pets/maggot_marquess.png"},"pet_moxi":{"name":"Moxi","source":"Amoxliatl","price":60000,"image":"assets/pets/moxi.png"},"pet_muphin":{"name":"Muphin","source":"Phantom Muspah","price":75000,"image":"assets/pets/muphin.png"},"pet_nexling":{"name":"Nexling","source":"Nex","price":160000,"image":"assets/pets/nexling.png"},"pet_nid":{"name":"Nid","source":"Araxxor","price":85000,"image":"assets/pets/nid.png"},"pet_noon":{"name":"Noon","source":"Grotesque Guardians","price":55000,"image":"assets/pets/noon.png"},"pet_olmlet":{"name":"Olmlet","source":"Chambers of Xeric","price":150000,"image":"assets/pets/olmlet.png"},"pet_pet_chaos_elemental":{"name":"Pet chaos elemental","source":"Chaos Elemental and Chaos Fanatic","price":40000,"image":"assets/pets/pet_chaos_elemental.png"},"pet_pet_dagannoth_prime":{"name":"Pet dagannoth prime","source":"Dagannoth Prime","price":45000,"image":"assets/pets/pet_dagannoth_prime.png"},"pet_pet_dagannoth_rex":{"name":"Pet dagannoth rex","source":"Dagannoth Rex","price":45000,"image":"assets/pets/pet_dagannoth_rex.png"},"pet_pet_dagannoth_supreme":{"name":"Pet dagannoth supreme","source":"Dagannoth Supreme","price":45000,"image":"assets/pets/pet_dagannoth_supreme.png"},"pet_pet_dark_core":{"name":"Pet dark core","source":"Corporeal Beast","price":100000,"image":"assets/pets/pet_dark_core.png"},"pet_pet_general_graardor":{"name":"Pet general graardor","source":"General Graardor","price":80000,"image":"assets/pets/pet_general_graardor.png"},"pet_pet_kril_tsutsaroth":{"name":"Pet k'ril tsutsaroth","source":"K'ril Tsutsaroth","price":80000,"image":"assets/pets/pet_kril_tsutsaroth.png"},"pet_pet_kraken":{"name":"Pet kraken","source":"Kraken","price":45000,"image":"assets/pets/pet_kraken.png"},"pet_pet_kreearra":{"name":"Pet kree'arra","source":"Kree'arra","price":80000,"image":"assets/pets/pet_kreearra.png"},"pet_pet_smoke_devil":{"name":"Pet smoke devil","source":"Thermonuclear smoke devil","price":50000,"image":"assets/pets/pet_smoke_devil.png"},"pet_pet_snakeling":{"name":"Pet snakeling","source":"Zulrah","price":65000,"image":"assets/pets/pet_snakeling.png"},"pet_pet_zilyana":{"name":"Pet zilyana","source":"Commander Zilyana","price":80000,"image":"assets/pets/pet_zilyana.png"},"pet_phoenix":{"name":"Phoenix","source":"Wintertodt","price":35000,"image":"assets/pets/phoenix.png"},"pet_prince_black_dragon":{"name":"Prince black dragon","source":"King Black Dragon","price":55000,"image":"assets/pets/prince_black_dragon.png"},"pet_scorpias_offspring":{"name":"Scorpia's offspring","source":"Scorpia","price":40000,"image":"assets/pets/scorpias_offspring.png"},"pet_scurry":{"name":"Scurry","source":"Scurrius","price":30000,"image":"assets/pets/scurry.png"},"pet_skotos":{"name":"Skotos","source":"Skotizo","price":50000,"image":"assets/pets/skotos.png"},"pet_smolcano":{"name":"Smolcano","source":"Zalcano","price":45000,"image":"assets/pets/smolcano.png"},"pet_smol_heredit":{"name":"Smol heredit","source":"Sol Heredit","price":90000,"image":"assets/pets/smol_heredit.png"},"pet_saracha":{"name":"Sraracha","source":"Sarachnis","price":40000,"image":"assets/pets/saracha.png"},"pet_tiny_tempor":{"name":"Tiny tempor","source":"Tempoross","price":35000,"image":"assets/pets/tiny_tempor.png"},"pet_tumekens_guardian":{"name":"Tumeken's guardian","source":"Tombs of Amascut","price":150000,"image":"assets/pets/tumekens_guardian.png"},"pet_tzrek_jad":{"name":"Tzrek-jad","source":"TzHaar Fight Cave","price":120000,"image":"assets/pets/tzrek_jad.png"},"pet_venenatis_spiderling":{"name":"Venenatis spiderling","source":"Venenatis and Spindel","price":70000,"image":"assets/pets/venenatis_spiderling.png"},"pet_vetion_jr":{"name":"Vet'ion jr.","source":"Vet'ion and Calvar'ion","price":70000,"image":"assets/pets/vetion_jr.png"},"pet_vorki":{"name":"Vorki","source":"Vorkath","price":75000,"image":"assets/pets/vorki.png"},"pet_wisp":{"name":"Wisp","source":"The Whisperer","price":95000,"image":"assets/pets/wisp.png"},"pet_yami":{"name":"Yami","source":"Yama","price":100000,"image":"assets/pets/yami.png"},"pet_youngllef":{"name":"Youngllef","source":"The Gauntlet","price":110000,"image":"assets/pets/youngllef.png"}};
+
+const PET_PRESENTATION_OVERRIDES = {
+  pet_free_cat:{scale:.86,ground:'walk',personality:'tail'},
+  pet_baby_mole:{scale:.92,ground:'walk',personality:'sniff'},
+  pet_gull:{scale:.88,ground:'walk',personality:'peck'},
+  pet_phoenix:{scale:1.03,ground:'hover',personality:'flap'},
+  pet_pet_kreearra:{scale:1.08,ground:'hover',personality:'flap'},
+  pet_pet_chaos_elemental:{scale:1.02,ground:'hover',personality:'float'},
+  pet_pet_dark_core:{scale:.94,ground:'hover',personality:'float'},
+  pet_wisp:{scale:.96,ground:'hover',personality:'float'},
+  pet_tiny_tempor:{scale:1.02,ground:'hover',personality:'float'},
+  pet_tumekens_guardian:{scale:1.16,ground:'walk',personality:'heavy'},
+  pet_tzrek_jad:{scale:1.16,ground:'walk',personality:'heavy'},
+  pet_jal_nib_rek:{scale:1.12,ground:'walk',personality:'heavy'},
+  pet_prince_black_dragon:{scale:1.1,ground:'walk',personality:'flap'},
+  pet_olmlet:{scale:1.08,ground:'walk',personality:'heavy'},
+  pet_youngllef:{scale:1.05,ground:'walk',personality:'heavy'},
+  pet_smolcano:{scale:1.02,ground:'walk',personality:'pulse'},
+  pet_saracha:{scale:1.04,ground:'walk',personality:'skitter'},
+  pet_scorpias_offspring:{scale:1.02,ground:'walk',personality:'skitter'},
+  pet_venenatis_spiderling:{scale:1.04,ground:'walk',personality:'skitter'},
+  pet_nid:{scale:1.04,ground:'walk',personality:'skitter'}
+};
+function getPetPresentation(id){
+  const meta=PET_CATALOG[id]||PET_CATALOG.pet_free_cat;
+  const name=(meta?.name||'').toLowerCase();
+  const auto={scale:1,ground:'walk',personality:'breathe'};
+  if(/phoenix|kree|wisp|chaos elemental|dark core|tempor/.test(name)){auto.ground='hover';auto.personality='float'}
+  else if(/spider|scorp|nid|saracha/.test(name)){auto.personality='skitter'}
+  else if(/dragon|jad|guardian|olmlet|youngllef|graardor|kril|nexling/.test(name)){auto.scale=1.1;auto.personality='heavy'}
+  else if(/cat|hellpuppy|cub|beef|mole|scurry/.test(name)){auto.scale=.9;auto.personality='tail'}
+  return {...auto,...(PET_PRESENTATION_OVERRIDES[id]||{})};
+}
+function petMarkup(id,alt='',extraClass=''){
+  const meta=PET_CATALOG[id]||PET_CATALOG.pet_free_cat;
+  const view=getPetPresentation(id);
+  return `<span class="pet-visual ${extraClass}" data-pet-id="${escapeHtml(id)}" data-pet-ground="${view.ground}" data-pet-personality="${view.personality}" style="--pet-scale:${view.scale}"><img src="${meta.image}" alt="${escapeHtml(alt||meta.name)}"></span>`;
+}
 let activePetState=null;
 let petNamesState={};
 let roamingPetTimer=null;
@@ -1546,7 +1691,7 @@ function renderBank(){
   const entries=Object.entries(items).filter(([,qty])=>Number(qty)>0);
   const activeMeta=activePetState&&PET_CATALOG[activePetState];
   const activeDisplayName=activePetState?(petNamesState[activePetState]||activeMeta?.name):null;
-  $('bankActivePet').innerHTML=activeMeta?`<img src="${activeMeta.image}" alt=""> ${escapeHtml(activeDisplayName)}`:'No pet out';
+  $('bankActivePet').innerHTML=activeMeta?`${petMarkup(activePetState,activeDisplayName,'pet-bank-mini')} ${escapeHtml(activeDisplayName)}`:'No pet out';
   $('bankPutPetAway').disabled=!activePetState;
   if(!entries.length){
     $('bankItems').innerHTML=Array.from({length:20},(_,i)=>`<div class="bank-slot empty"><span>${i===0?'EMPTY BANK':'—'}</span></div>`).join('');
@@ -1555,7 +1700,7 @@ function renderBank(){
   }
   const slots=entries.map(([id,qty])=>{
     const pet=PET_CATALOG[id];
-    if(pet){const customName=petNamesState[id]||'';return `<div class="bank-slot pet-bank-slot ${activePetState===id?'active-pet':''}"><img src="${pet.image}" alt="${escapeHtml(pet.name)}"><b>${escapeHtml(customName||pet.name)}</b><small>${escapeHtml(pet.source)}</small><div class="pet-name-row"><input class="pet-name-input" data-pet-id="${escapeHtml(id)}" maxlength="20" value="${escapeHtml(customName)}" placeholder="Name your pet"><button type="button" class="pet-name-save" data-pet-id="${escapeHtml(id)}">SAVE</button></div><button type="button" class="bank-pet-toggle" data-pet-id="${escapeHtml(id)}">${activePetState===id?'PUT AWAY':'LET OUT'}</button></div>`;}
+    if(pet){const customName=petNamesState[id]||'';return `<div class="bank-slot pet-bank-slot ${activePetState===id?'active-pet':''}" data-pet-id="${escapeHtml(id)}">${petMarkup(id,customName||pet.name,'pet-bank-art')}<b>${escapeHtml(customName||pet.name)}</b><small>${escapeHtml(pet.source)}</small><div class="pet-name-row"><input class="pet-name-input" data-pet-id="${escapeHtml(id)}" maxlength="20" value="${escapeHtml(customName)}" placeholder="Name your pet"><button type="button" class="pet-name-save" data-pet-id="${escapeHtml(id)}">SAVE</button></div><button type="button" class="bank-pet-toggle" data-pet-id="${escapeHtml(id)}">${activePetState===id?'PUT AWAY':'LET OUT'}</button></div>`;}
     return `<div class="bank-slot"><div class="bank-placeholder">?</div><b>${String(id).replaceAll('_',' ')}</b><strong>${Number(qty).toLocaleString('en-GB')}</strong></div>`;
   });
   while(slots.length<20)slots.push('<div class="bank-slot empty"><span>—</span></div>');
@@ -1607,39 +1752,282 @@ async function setMyActivePet(petId){
   activePetState=data?.[0]?.active_pet||null;if(data?.[0]?.pet_names)petNamesState=data[0].pet_names;renderBank();refreshRoamingPets();
   $('bankMessage').textContent=activePetState?`${PET_CATALOG[activePetState]?.name||'Your pet'} is now following you.`:'Your pet has been put away.';
 }
-function moveRoamingPet(el,immediate=false){
-  const pad=22;
-  const maxX=Math.max(pad,window.innerWidth-el.offsetWidth-pad);
-  const minY=Math.max(150,Math.floor(window.innerHeight*.52));
-  const maxY=Math.max(minY,window.innerHeight-el.offsetHeight-28);
-  const previousX=Number(el.dataset.x||pad);
-  const x=pad+Math.random()*(maxX-pad);
-  // Pets walk on lower-page lanes rather than floating anywhere on screen.
-  const laneCount=Math.max(1,Math.floor((maxY-minY)/62)+1);
-  const lane=Math.floor(Math.random()*laneCount);
-  const y=Math.min(maxY,minY+lane*62);
-  const facing=x>=previousX?1:-1;
-  el.dataset.x=String(x);el.dataset.y=String(y);
-  el.style.transitionDuration=immediate?'0s':`${5.5+Math.random()*3.5}s`;
-  el.style.transform=`translate3d(${x}px,${y}px,0)`;
-  const sprite=el.querySelector('.pet-sprite');
-  if(sprite)sprite.style.setProperty('--pet-facing',String(facing));
-  el.classList.toggle('pet-is-walking',!immediate);
-  clearTimeout(el._walkStopTimer);
-  if(!immediate)el._walkStopTimer=setTimeout(()=>el.classList.remove('pet-is-walking'),8500);
-}
-async function refreshRoamingPets(){
-  const {data,error}=await db.rpc('get_active_pets');if(error){console.error(error);return;}
-  const layer=$('roamingPets');if(!layer)return;
-  const current=new Map([...layer.children].map(el=>[el.dataset.user,el]));
-  (data||[]).slice(0,18).forEach(row=>{
-    const meta=PET_CATALOG[row.active_pet];if(!meta)return;
-    const petDisplayName=row.pet_name||meta.name;let el=current.get(row.username);if(!el){el=document.createElement('div');el.className='roaming-pet';el.dataset.user=row.username;el.innerHTML=`<div class="pet-label"><b>${escapeHtml(petDisplayName)}</b><small>${escapeHtml(row.username)}</small></div><div class="pet-sprite"><img src="${meta.image}" alt="${escapeHtml(petDisplayName)}"></div>`;layer.appendChild(el);requestAnimationFrame(()=>moveRoamingPet(el,true));}else{el.querySelector('img').src=meta.image;el.querySelector('img').alt=petDisplayName;el.querySelector('.pet-label b').textContent=petDisplayName;el.querySelector('.pet-label small').textContent=row.username;current.delete(row.username);}
-  });
-  current.forEach(el=>el.remove());
-}
-function startRoamingPets(){clearInterval(roamingPetTimer);refreshRoamingPets();roamingPetTimer=setInterval(()=>{refreshRoamingPets();document.querySelectorAll('.roaming-pet').forEach(el=>moveRoamingPet(el));},9000);}
+const PET_ROOM_ROTATION_MS=60000;
+const PET_ROOM_TRANSITION_MS=1450;
+const PET_ROOM_CONFIGS=[
+  {
+    id:'mario',image:'assets/mario-kart-pet-room.png',
+    entrance:[.115,.365],exit:[.505,.205],
+    startGrid:[[.105,.365],[.123,.385],[.105,.405],[.123,.425],[.105,.445],[.123,.465]],
+    // Closely traced from the marked red racing line. The points stay near the
+    // middle of the tan road through the bridge, right loop, centre and lower loop.
+    route:[
+      [.125,.37],[.132,.30],[.145,.25],[.18,.23],[.225,.25],
+      [.285,.28],[.35,.28],[.405,.27],[.435,.22],[.46,.145],
+      [.495,.105],[.535,.105],[.57,.16],[.595,.225],[.64,.27],
+      [.70,.285],[.77,.285],[.82,.30],[.855,.35],[.885,.43],
+      [.905,.52],[.91,.62],[.895,.70],[.86,.765],[.81,.79],
+      [.755,.79],[.70,.765],[.665,.72],[.645,.655],[.64,.59],
+      [.62,.535],[.585,.505],[.545,.505],[.515,.55],[.505,.62],
+      [.51,.70],[.495,.77],[.46,.82],[.405,.85],[.34,.86],
+      [.275,.86],[.21,.86],[.15,.85],[.105,.82],[.075,.77],
+      [.075,.71],[.09,.64],[.105,.575],[.115,.52],[.12,.46],
+      [.145,.40],[.18,.37],[.22,.36],[.255,.40],[.275,.455],
+      [.315,.49],[.365,.505],[.415,.505],[.455,.52],[.49,.555],
+      [.52,.57],[.555,.54],[.59,.505],[.62,.48],[.67,.465],
+      [.72,.465],[.765,.47],[.80,.50],[.825,.55],[.835,.62],
+      [.825,.69],[.79,.735],[.745,.75],[.70,.735],[.67,.69],
+      [.665,.63],[.68,.575],[.72,.535],[.765,.515],[.81,.515],
+      [.845,.54],[.865,.59],[.865,.65],[.84,.70],[.80,.735],
+      [.75,.76],[.69,.76],[.63,.745],[.58,.71],[.545,.66],
+      [.515,.60],[.48,.555],[.435,.52],[.385,.505],[.33,.50],
+      [.28,.49],[.235,.455],[.215,.405],[.215,.345],[.235,.305],
+      [.275,.285],[.325,.285],[.37,.29],[.405,.305],[.425,.34],
+      [.42,.385],[.395,.42],[.35,.445],[.30,.45],[.25,.43],
+      [.21,.39],[.18,.35],[.15,.34]
+    ],
+    fallChance:0
+  },
+  {
+    id:'hunger',image:'assets/hunger-games-pet-room.png',
+    entrance:[.50,.50],
+    spawnPoints:[[.50,.13],[.72,.20],[.84,.48],[.73,.76],[.50,.87],[.27,.76],[.16,.48],[.28,.20]],
+    centrePoints:[[.47,.45],[.52,.45],[.55,.50],[.52,.55],[.47,.55],[.44,.50],[.50,.50]],
+    retreatPoints:[[.50,.20],[.76,.30],[.80,.55],[.67,.75],[.36,.76],[.20,.57],[.22,.31]],
+    exitPoints:[[-.08,.15],[.50,-.12],[1.08,.16],[1.10,.55],[.76,1.10],[.25,1.10],[-.10,.62]],
+    fallChance:0
+  },
+  {
+    id:'squid',image:'assets/squid-games-pet-room.png',
+    entrance:[.50,.245],exit:[.50,.245],
+    approach:[[.50,.32],[.43,.35],[.34,.36],[.25,.37],[.17,.42],[.12,.50]],
+    course:[[.22,.65],[.27,.56],[.32,.67],[.37,.54],[.43,.64],[.46,.50],[.51,.61],[.54,.48],[.60,.60],[.64,.49],[.69,.62],[.73,.51],[.78,.65]],
+    returnRoute:[[.86,.70],[.91,.61],[.91,.46],[.84,.37],[.72,.35],[.61,.34],[.50,.32],[.39,.34],[.27,.35],[.17,.42],[.12,.50]],
+    hopIndexes:[0,1,2,3,4,5,6,7,8,9,10,11,12],fallChance:.035
+  }
+];
+let petRoomIndex=0;
+let petRoomSwitchTimer=null;
+let petRoomSwitching=false;
+let petRoomBackgroundFront='a';
 
+function currentPetRoom(){return PET_ROOM_CONFIGS[petRoomIndex]}
+function petRoomPoint(point,el){
+  const room=$('petRoom')?.querySelector('.pet-room-scene');
+  if(!room)return{x:20,y:20};
+  const maxY=Math.max(10,room.clientHeight-el.offsetHeight-8);
+  return{x:Math.max(-el.offsetWidth*1.4,Math.min(room.clientWidth+el.offsetWidth*.4,point[0]*room.clientWidth-el.offsetWidth/2)),y:Math.max(-el.offsetHeight,Math.min(maxY,point[1]*room.clientHeight-el.offsetHeight*.72))};
+}
+function petMotionProfile(el){
+  if(!el._petMotionProfile){
+    const kartThemes=['air','water','earth','fire','mind','body','cosmic','chaos','nature','law','death','astral','blood','soul','wrath','dust','mud','smoke','steam','lava'];
+    el._petMotionProfile={
+      speed:.94+Math.random()*.12,offsetX:-3+Math.random()*6,offsetY:-1.5+Math.random()*3,
+      pauseChance:.07+Math.random()*.06,fallMultiplier:.65+Math.random()*.7,
+      loopDelay:180+Math.random()*720,racePace:.90+Math.random()*.20,
+      kartTheme:kartThemes[Math.floor(Math.random()*kartThemes.length)],
+      weaponIndex:1+Math.floor(Math.random()*8),fightStyle:Math.random(),escapePoint:Math.floor(Math.random()*7),hp:100,maxHp:100,healing:false
+    };
+  }
+  return el._petMotionProfile;
+}
+function ensurePetKart(el){
+  if(!el.querySelector('.pet-kart')){const kart=document.createElement('div');kart.className='pet-kart';kart.innerHTML='<i></i><b></b>';el.insertBefore(kart,el.querySelector('.pet-sprite'));}
+  const profile=petMotionProfile(el);el.dataset.kartTheme=profile.kartTheme;
+}
+function setPetKart(el,on){
+  const wasOn=el.classList.contains('pet-in-kart');
+  ensurePetKart(el);
+  if(on&&!wasOn){
+    const themes=['air','water','earth','fire','mind','body','cosmic','chaos','nature','law','death','astral','blood','soul','wrath','dust','mud','smoke','steam','lava'];
+    const profile=petMotionProfile(el);
+    profile.kartTheme=themes[Math.floor(Math.random()*themes.length)];
+    el.dataset.kartTheme=profile.kartTheme;
+  }
+  el.classList.toggle('pet-in-kart',on);
+}
+function ensurePetWeapon(el){
+  if(!el.querySelector('.pet-weapon')){const weapon=document.createElement('div');weapon.className='pet-weapon';el.querySelector('.pet-sprite')?.appendChild(weapon);}ensurePetHealthUi(el);
+}
+function setPetWeapon(el,on,reroll=false){
+  ensurePetWeapon(el);const profile=petMotionProfile(el);
+  if(on&&(reroll||!profile.weaponIndex))profile.weaponIndex=1+Math.floor(Math.random()*8);
+  el.style.setProperty('--pet-weapon',`url('assets/hunger-weapons-new/weapon-${String(profile.weaponIndex).padStart(2,'0')}.png')`);
+  el.classList.toggle('pet-armed',on);
+}
+function ensurePetHealthUi(el){
+  if(!el.querySelector('.pet-healthbar')){const bar=document.createElement('div');bar.className='pet-healthbar';bar.innerHTML='<i></i>';el.appendChild(bar);}
+  if(!el.querySelector('.pet-heal-item')){const item=document.createElement('div');item.className='pet-heal-item';el.querySelector('.pet-sprite')?.appendChild(item);}
+  updatePetHealthUi(el);
+}
+function updatePetHealthUi(el){
+  const profile=petMotionProfile(el),fill=el.querySelector('.pet-healthbar i');
+  if(fill)fill.style.width=`${Math.max(0,Math.min(100,(profile.hp/profile.maxHp)*100))}%`;
+  el.classList.toggle('pet-health-low',profile.hp<=32);
+}
+function damagePet(el){
+  const profile=petMotionProfile(el);if(profile.healing)return;
+  profile.hp=Math.max(8,profile.hp-(5+Math.floor(Math.random()*12)));updatePetHealthUi(el);
+}
+function showPetHealItem(el,file){
+  ensurePetHealthUi(el);const item=el.querySelector('.pet-heal-item');
+  item.style.backgroundImage=`url('assets/hunger-healing/${file}')`;
+  item.classList.remove('is-visible');void item.offsetWidth;item.classList.add('is-visible');
+}
+async function healPetIfNeeded(el,cfg){
+  const profile=petMotionProfile(el);if(profile.healing||profile.hp>32||petRoomSwitching||!el.isConnected)return;
+  profile.healing=true;setPetWeapon(el,false);addPetRoomEffect(el,'LOW HP!');
+  await movePetTo(el,[.50,.50],{run:true});if(petRoomSwitching||!el.isConnected){profile.healing=false;return;}
+  const choice=Math.floor(Math.random()*3);
+  if(choice===0){showPetHealItem(el,'shark.png');addPetRoomEffect(el,'CHOMP!');await petPause(el,520,760);profile.hp=Math.min(profile.maxHp,profile.hp+58);}
+  else if(choice===1){showPetHealItem(el,'anglerfish.png');addPetRoomEffect(el,'NOM!');await petPause(el,520,760);profile.hp=Math.min(profile.maxHp,profile.hp+68);}
+  else{showPetHealItem(el,'yellow-potion.png');addPetRoomEffect(el,'GLUG!');await petPause(el,420,620);profile.hp=Math.min(profile.maxHp,profile.hp+35);updatePetHealthUi(el);showPetHealItem(el,'pink-potion.png');addPetRoomEffect(el,'FOLLOW-UP!');await petPause(el,420,620);profile.hp=profile.maxHp;}
+  el.querySelector('.pet-heal-item')?.classList.remove('is-visible');updatePetHealthUi(el);setPetWeapon(el,true,true);addPetRoomEffect(el,'HEALED!');profile.healing=false;
+}
+function funnyFightEffect(el){
+  const effects=['POW!','BONK!','CLANG!','MISS!','OOF!','⚔'];
+  const effect=effects[Math.floor(Math.random()*effects.length)];addPetRoomEffect(el,effect);
+  el.classList.remove('pet-attacking');void el.offsetWidth;el.classList.add('pet-attacking');
+  clearTimeout(el._attackTimer);el._attackTimer=setTimeout(()=>el.classList.remove('pet-attacking'),520);
+  if(effect!=='MISS!')damagePet(el);
+}
+function flingPetWeapon(el){
+  const scene=$('petRoom')?.querySelector('.pet-room-scene');
+  const profile=petMotionProfile(el);
+  if(!scene||!el.classList.contains('pet-armed')){setPetWeapon(el,false);return;}
+  const thrown=document.createElement('div');
+  thrown.className='flung-hunger-weapon';
+  thrown.style.backgroundImage=`url('assets/hunger-weapons-new/weapon-${String(profile.weaponIndex).padStart(2,'0')}.png')`;
+  thrown.style.left=`${Number(el.dataset.x||0)+34}px`;
+  thrown.style.top=`${Number(el.dataset.y||0)+28}px`;
+  const dx=(-150+Math.random()*300),dy=(-120-Math.random()*160),rot=(-540+Math.random()*1080);
+  thrown.style.setProperty('--fling-x',`${dx}px`);thrown.style.setProperty('--fling-y',`${dy}px`);thrown.style.setProperty('--fling-r',`${rot}deg`);
+  scene.appendChild(thrown);setPetWeapon(el,false);setTimeout(()=>thrown.remove(),1250);
+}
+function performPetFlip(el){
+  return new Promise(resolve=>{
+    const cls=Math.random()<.5?'pet-backflip':'pet-kungfu-flip';
+    el.classList.remove('pet-backflip','pet-kungfu-flip');void el.offsetWidth;el.classList.add(cls);
+    setTimeout(()=>{el.classList.remove(cls);resolve();},680);
+  });
+}
+function risePetFromPlatform(el){
+  return new Promise(resolve=>{
+    el.classList.remove('pet-platform-rise');void el.offsetWidth;el.classList.add('pet-platform-rise');
+    setTimeout(()=>{el.classList.remove('pet-platform-rise');resolve();},900);
+  });
+}
+async function launchPetFromArena(el,cfg){
+  damagePet(el);flingPetWeapon(el);addPetRoomEffect(el,'WHEEEE!');el.classList.add('pet-arena-launched');
+  const launch=[Math.random()<.5?-.16:1.16,-.10+Math.random()*1.15];
+  await movePetTo(el,launch,{run:true,noOffset:true});el.style.opacity='0';el.classList.remove('pet-arena-launched');
+  await petPause(el,420,950);if(petRoomSwitching||!el.isConnected)return;
+  const spawn=cfg.spawnPoints[Math.floor(Math.random()*cfg.spawnPoints.length)];await movePetTo(el,spawn,{immediate:true,noOffset:true});
+  el.style.opacity='1';await risePetFromPlatform(el);await movePetTo(el,cfg.centrePoints[Math.floor(Math.random()*cfg.centrePoints.length)],{run:true});await healPetIfNeeded(el,cfg);setPetWeapon(el,true,true);addPetRoomEffect(el,'BACK!');
+}
+function petSpeed(el){
+  const view=getPetPresentation(el.dataset.petId||'pet_free_cat');
+  const base=view.personality==='heavy'?48:view.personality==='skitter'?82:view.ground==='hover'?68:60;
+  return base*petMotionProfile(el).speed;
+}
+function petPause(el,min=180,max=720){if(petRoomSwitching||!el.isConnected)return Promise.resolve();return new Promise(resolve=>{el._idleTimer=setTimeout(resolve,min+Math.random()*(max-min));});}
+function stopPetTimers(el){clearTimeout(el._walkStopTimer);clearTimeout(el._nextWalkTimer);clearTimeout(el._roomLoopTimer);clearTimeout(el._idleTimer);clearTimeout(el._attackTimer)}
+function movePetTo(el,point,{immediate=false,run=false,hop=false,race=false,noOffset=false}={}){
+  return new Promise(resolve=>{
+    stopPetTimers(el);const visual=el.querySelector('.pet-visual');const target=petRoomPoint(point,el);const profile=petMotionProfile(el);
+    if(!immediate&&!noOffset){target.x+=profile.offsetX;target.y+=profile.offsetY;}
+    const oldX=Number(el.dataset.x||target.x),oldY=Number(el.dataset.y||target.y);const distance=Math.hypot(target.x-oldX,target.y-oldY);
+    const raceBoost=race?(2.15*profile.racePace*(.94+Math.random()*.12)):1;
+    const duration=immediate?0:Math.max(.16,Math.min(race?1.55:(run?2.1:4.8),distance/(petSpeed(el)*(run?1.75:1)*raceBoost)));
+    el.dataset.x=String(target.x);el.dataset.y=String(target.y);el.style.transitionDuration=`${duration}s`;el.style.transform=`translate3d(${target.x}px,${target.y}px,0)`;
+    if(visual)visual.style.setProperty('--pet-facing',String(target.x>=oldX?1:-1));
+    el.classList.toggle('pet-is-walking',!immediate);el.classList.toggle('pet-room-running',(run||race)&&!immediate);el.classList.toggle('pet-room-hopping',hop&&!immediate);
+    if(immediate){resolve();return}el._walkStopTimer=setTimeout(()=>{el.classList.remove('pet-is-walking','pet-room-running','pet-room-hopping');resolve()},duration*1000+25);
+  });
+}
+async function walkSequence(el,points,opts={}){const profile=petMotionProfile(el);for(let i=0;i<points.length;i++){if(!el.isConnected)return false;await movePetTo(el,points[i],{run:opts.run,hop:opts.hopIndexes?.includes(i),race:opts.race,noOffset:opts.noOffset});if(!opts.noPause&&!petRoomSwitching&&Math.random()<profile.pauseChance)await petPause(el,180,opts.run?520:900);}return true;}
+function petFall(el){return new Promise(resolve=>{stopPetTimers(el);el.classList.add('pet-room-falling');addPetRoomEffect(el,'!');setTimeout(()=>{el.classList.remove('pet-room-falling');el.style.opacity='0';resolve()},760);});}
+
+function clearHungerCarryovers(el){
+  if(!el)return;setPetWeapon(el,false);el.classList.remove('pet-armed','pet-attacking','pet-healing','pet-health-low','pet-arena-launched','pet-flipping','pet-kungfu-flip');
+  el.style.removeProperty('--pet-weapon');el.querySelectorAll('.pet-heal-item,.pet-room-effect').forEach(n=>n.remove());
+  const profile=petMotionProfile(el);profile.healing=false;
+}
+function clearAllHungerSceneItems(){const scene=$('petRoom')?.querySelector('.pet-room-scene');scene?.querySelectorAll('.flung-hunger-weapon,.pet-heal-item').forEach(n=>n.remove());document.querySelectorAll('.roaming-pet').forEach(clearHungerCarryovers)}
+async function enterCurrentRoom(el,delay=0,rowIndex=0){
+  if(delay)await new Promise(r=>setTimeout(r,delay));const cfg=currentPetRoom();petMotionProfile(el);el.style.opacity='0';
+  if(cfg.id==='mario'){
+    clearHungerCarryovers(el);setPetKart(el,true);const grid=cfg.startGrid[rowIndex%cfg.startGrid.length];await movePetTo(el,grid,{immediate:true,noOffset:true});
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));el.style.opacity='1';
+    // Brief grid hold makes the race read clearly before each kart launches independently.
+    await petPause(el,350+rowIndex*80,800+rowIndex*100);
+  }else if(cfg.id==='hunger'){
+    setPetKart(el,false);setPetWeapon(el,false);ensurePetHealthUi(el);const hungerProfile=petMotionProfile(el);hungerProfile.hp=hungerProfile.maxHp;hungerProfile.healing=false;updatePetHealthUi(el);const spawn=cfg.spawnPoints[rowIndex%cfg.spawnPoints.length];
+    await movePetTo(el,spawn,{immediate:true,noOffset:true});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));el.style.opacity='1';
+    await risePetFromPlatform(el);await petPause(el,120+Math.random()*280,330+Math.random()*350);await movePetTo(el,cfg.centrePoints[rowIndex%cfg.centrePoints.length],{run:true});
+    setPetWeapon(el,true,true);addPetRoomEffect(el,'GRAB!');
+  }else{
+    clearHungerCarryovers(el);setPetKart(el,false);setPetWeapon(el,false);await movePetTo(el,cfg.entrance,{immediate:true});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));el.style.opacity='1';await movePetTo(el,cfg.approach[0],{run:true});
+  }
+  runPetRoomLoop(el);
+}
+async function runPetRoomLoop(el){
+  if(!el.isConnected||petRoomSwitching)return;const cfg=currentPetRoom();el.dataset.roomId=cfg.id;
+  if(cfg.id==='mario'){
+    clearHungerCarryovers(el);setPetKart(el,true);setPetWeapon(el,false);await walkSequence(el,cfg.route,{race:true,noPause:true,noOffset:true});
+    const p=petMotionProfile(el);p.racePace=Math.max(.86,Math.min(1.16,p.racePace+(-.06+Math.random()*.12)));
+  }else if(cfg.id==='hunger'){
+    setPetKart(el,false);setPetWeapon(el,true);ensurePetHealthUi(el);const profile=petMotionProfile(el);if(profile.hp<=32){await healPetIfNeeded(el,cfg);if(petRoomSwitching||!el.isConnected)return;}const roll=Math.random();
+    if(roll<.035){
+      await launchPetFromArena(el,cfg);
+    }else if(roll<.115){
+      const retreat=cfg.retreatPoints[Math.floor(Math.random()*cfg.retreatPoints.length)];await movePetTo(el,retreat,{run:true});
+      if(Math.random()<.45)await performPetFlip(el);await petPause(el,180,760);await movePetTo(el,cfg.centrePoints[Math.floor(Math.random()*cfg.centrePoints.length)],{run:true});
+    }else if(roll<.305){
+      flingPetWeapon(el);addPetRoomEffect(el,'YEET!');await petPause(el,100,330);await movePetTo(el,[.50,.50],{run:true});setPetWeapon(el,true,true);addPetRoomEffect(el,'NEW!');
+    }else if(roll<.455){
+      await performPetFlip(el);addPetRoomEffect(el,Math.random()<.5?'HI-YA!':'FLIP!');
+    }else{
+      const target=cfg.centrePoints[Math.floor(Math.random()*cfg.centrePoints.length)];await movePetTo(el,target,{run:true});funnyFightEffect(el);await healPetIfNeeded(el,cfg);
+      if(Math.random()<.16)await performPetFlip(el);await petPause(el,130,500);
+      if(Math.random()<.38){const target2=cfg.centrePoints[Math.floor(Math.random()*cfg.centrePoints.length)];await movePetTo(el,target2,{run:true});funnyFightEffect(el);await healPetIfNeeded(el,cfg);}
+    }
+  }else{
+    setPetWeapon(el,false);await walkSequence(el,cfg.approach.slice(1),{run:true});if(petRoomSwitching||!el.isConnected)return;
+    const profile=petMotionProfile(el),willFall=Math.random()<(cfg.fallChance*profile.fallMultiplier),fallAt=willFall?2+Math.floor(Math.random()*(cfg.course.length-4)):-1;
+    for(let i=0;i<cfg.course.length;i++){await movePetTo(el,cfg.course[i],{run:true,hop:true});if(!petRoomSwitching&&Math.random()<profile.pauseChance*.35)await petPause(el,100,280);if(i===fallAt){await petFall(el);if(petRoomSwitching||!el.isConnected)return;await enterCurrentRoom(el,500+Math.random()*600,Math.floor(Math.random()*6));return;}}
+    if(petRoomSwitching||!el.isConnected)return;await walkSequence(el,cfg.returnRoute,{run:true});
+  }
+  if(!petRoomSwitching&&el.isConnected){const profile=petMotionProfile(el);const delay=cfg.id==='mario'?30+Math.random()*130:cfg.id==='hunger'?120+Math.random()*420:profile.loopDelay+Math.random()*520;el._roomLoopTimer=setTimeout(()=>runPetRoomLoop(el),delay);}
+}
+async function sendPetOffMap(el,cfg){
+  stopPetTimers(el);clearPetRoomAction(el);el.classList.remove('pet-room-falling');
+  if(cfg.id==='mario'){
+    // Pull into the centre, get out, then walk beneath the stone bridge to leave.
+    await movePetTo(el,[.53,.55],{race:true,noOffset:true});await movePetTo(el,[.505,.39],{race:true,noOffset:true});setPetKart(el,false);await petPause(el,90,260);await movePetTo(el,[.505,.28],{run:true,noOffset:true});await movePetTo(el,cfg.exit,{run:true,noOffset:true});
+  }else if(cfg.id==='hunger'){
+    setPetWeapon(el,false);const profile=petMotionProfile(el);const exit=cfg.exitPoints[profile.escapePoint%cfg.exitPoints.length];await movePetTo(el,exit,{run:true,noOffset:true});
+  }else{setPetWeapon(el,false);await movePetTo(el,[.64,.34],{run:true});await movePetTo(el,cfg.exit,{run:true});}
+  el.style.opacity='0';
+}
+function setRoomBackground(cfg){const scene=$('petRoom')?.querySelector('.pet-room-scene');if(!scene)return;const nextClass=petRoomBackgroundFront==='a'?'.pet-room-bg-b':'.pet-room-bg-a',oldClass=petRoomBackgroundFront==='a'?'.pet-room-bg-a':'.pet-room-bg-b';const next=scene.querySelector(nextClass),old=scene.querySelector(oldClass);next.style.backgroundImage=`url('${cfg.image}')`;next.classList.add('is-visible');old.classList.remove('is-visible');petRoomBackgroundFront=petRoomBackgroundFront==='a'?'b':'a';scene.dataset.room=cfg.id;}
+async function switchPetRoom(){
+  if(petRoomSwitching)return;petRoomSwitching=true;const oldCfg=currentPetRoom(),pets=[...document.querySelectorAll('.roaming-pet')];
+  await Promise.race([Promise.all(pets.map((el,i)=>new Promise(r=>setTimeout(r,i*55)).then(()=>sendPetOffMap(el,oldCfg)))),new Promise(r=>setTimeout(r,7500))]);
+  clearAllHungerSceneItems();petRoomIndex=(petRoomIndex+1)%PET_ROOM_CONFIGS.length;const cfg=currentPetRoom();setRoomBackground(cfg);await new Promise(r=>setTimeout(r,PET_ROOM_TRANSITION_MS));petRoomSwitching=false;
+  pets.filter(el=>el.isConnected).forEach((el,i)=>enterCurrentRoom(el,i*105+Math.random()*220,i));
+}
+function addPetRoomEffect(el,text){el.querySelectorAll('.pet-room-effect').forEach(n=>n.remove());const fx=document.createElement('span');fx.className='pet-room-effect';fx.textContent=text;el.appendChild(fx);setTimeout(()=>fx.remove(),1700);}
+function clearPetRoomAction(el){el.classList.remove('pet-room-splash','pet-room-sitting','pet-room-towel','pet-room-treat');el.dataset.actionPause='0';}
+async function refreshRoamingPets(){
+  const {data,error}=await db.rpc('get_active_pets');if(error){console.error(error);return;}const layer=$('roamingPets');if(!layer)return;const current=new Map([...layer.children].map(el=>[el.dataset.user,el]));
+  (data||[]).slice(0,18).forEach((row,rowIndex)=>{const meta=PET_CATALOG[row.active_pet];if(!meta)return;const petDisplayName=row.pet_name||meta.name;let el=current.get(row.username);
+    if(!el){el=document.createElement('div');el.className='roaming-pet';el.dataset.user=row.username;el.innerHTML=`<div class="pet-label"><b>${escapeHtml(petDisplayName)}</b><small>${escapeHtml(row.username)}</small></div><div class="pet-sprite">${petMarkup(row.active_pet,petDisplayName,'roaming-pet-art')}</div>`;el.dataset.petId=row.active_pet;layer.appendChild(el);ensurePetKart(el);enterCurrentRoom(el,rowIndex*85+Math.random()*260,rowIndex);}
+    else{if(el.dataset.petId!==row.active_pet){el.querySelector('.pet-sprite').innerHTML=petMarkup(row.active_pet,petDisplayName,'roaming-pet-art');el.dataset.petId=row.active_pet;}const img=el.querySelector('img');if(img){img.src=meta.image;img.alt=petDisplayName}el.querySelector('.pet-label b').textContent=petDisplayName;el.querySelector('.pet-label small').textContent=row.username;current.delete(row.username);}
+  });current.forEach(el=>{stopPetTimers(el);el.remove()});
+}
+function startRoamingPets(){clearInterval(roamingPetTimer);clearInterval(petRoomSwitchTimer);window.removeEventListener('resize',reflowPetRoom);window.addEventListener('resize',reflowPetRoom);const scene=$('petRoom')?.querySelector('.pet-room-scene');if(scene)scene.dataset.room=currentPetRoom().id;const first=scene?.querySelector('.pet-room-bg-a');if(first)first.style.backgroundImage=`url('${currentPetRoom().image}')`;refreshRoamingPets();roamingPetTimer=setInterval(refreshRoamingPets,12000);petRoomSwitchTimer=setInterval(switchPetRoom,PET_ROOM_ROTATION_MS);}
+function reflowPetRoom(){document.querySelectorAll('.roaming-pet').forEach((el,i)=>{const cfg=currentPetRoom();const point=cfg.id==='squid'?(cfg.approach?.[0]||cfg.entrance):cfg.id==='hunger'?cfg.spawnPoints[i%cfg.spawnPoints.length]:(cfg.startGrid?.[i%cfg.startGrid.length]||cfg.entrance);movePetTo(el,point,{immediate:true,noOffset:true});});}
 let geState={gp:0,items:[]};
 let geSearchTimer=null;
 
@@ -1713,6 +2101,8 @@ function renderWiseTask(){
   $('wiseTaskReward').textContent=`${Number(t.reward_gp).toLocaleString('en-GB')} GP`;
   $('wiseTaskFill').style.width=`${pct}%`;
   $('wiseClaimTask').classList.toggle('hidden',!t.can_claim);
+  $('wiseSkipTask').disabled=Number(t.gp||0)<5000;
+  $('wiseSkipTask').title=Number(t.gp||0)<5000?'You need 5,000 GP to skip this task.':'Pay 5,000 GP and receive a different task.';
   $('wiseActiveTask').classList.toggle('complete',Boolean(t.can_claim));
   $('wiseTaskMessage').textContent=t.can_claim?'Task complete — claim your Gold pieces!':'Earn the XP in the matching Repo Company level.';
 }
@@ -1736,6 +2126,20 @@ async function requestWiseTask(){
   wiseTaskState=data?.[0]||await fetchWiseTask();renderWiseTask();
   if(wiseTaskState?.task_skill)toast(`New task: earn ${Number(wiseTaskState.required_xp).toLocaleString('en-GB')} ${WISE_SKILL_LABELS[wiseTaskState.task_skill]} XP`,4200);
 }
+
+async function skipWiseTask(){
+  if(!wiseTaskState?.task_skill)return;
+  if(Number(wiseTaskState.gp||0)<5000){toast('You need 5,000 GP to skip this task.');return;}
+  if(!confirm('Skip this Wise Old Man task for 5,000 GP? Your current progress will be lost.'))return;
+  const button=$('wiseSkipTask');button.disabled=true;button.textContent='SKIPPING…';
+  const {data,error}=await db.rpc('skip_wise_old_man_task');
+  button.textContent='SKIP TASK — 5,000 GP';
+  if(error){console.error(error);toast(error.message?.includes('Not enough')?'You need 5,000 GP to skip this task.':'Could not skip task. Run the updated Wise Old Man SQL.');wiseTaskState=await fetchWiseTask();renderWiseTask();return;}
+  wiseTaskState=data?.[0]||await fetchWiseTask();renderWiseTask();
+  const label=WISE_SKILL_LABELS[wiseTaskState?.task_skill]||wiseTaskState?.task_skill||'task';
+  toast(`Task skipped for 5,000 GP. New task: ${label}.`,4600);
+}
+
 async function claimWiseTask(auto=false){
   const {data,error}=await db.rpc('claim_wise_old_man_task');
   if(error){console.error(error);if(!auto)toast('Task is not complete yet.');return false}
@@ -1769,7 +2173,8 @@ async function openPlayerStats(username) {
     ['Strength', 'assets/strength-icon.webp', row.strength_xp],
     ['Defence', 'assets/defence-icon.webp', row.defence_xp],
     ['Sailing', 'assets/sailing-icon.webp', row.sailing_xp],
-    ['Runecrafting', 'assets/runecrafting-icon.png', row.runecrafting_xp]
+    ['Runecrafting', 'assets/runecrafting-icon.png', row.runecrafting_xp],
+    ['Cooking', 'assets/cooking-icon-new.png', row.cooking_xp]
   ];
   const totalLevel = skills.reduce((sum, skill) => sum + levelFromXp(Number(skill[2]) || 0), 0);
   const skillCards = skills.map(([label, image, rawXp]) => {
@@ -1799,6 +2204,214 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 }
 
+
+
+
+// MINI QUESTS — Cook's Assistant playable WASD adventure.
+const QUEST_LOCATIONS={
+ world:{name:'Lumbridge',description:'Explore Lumbridge. Walk into marked buildings and fields.'},
+ kitchen:{name:'Lumbridge Castle Kitchen',description:'The Cook is panicking beside an unfinished birthday cake.'},
+ cellar:{name:'Lumbridge Castle Cellar',description:'A cool stone cellar beneath the castle.'},
+ store:{name:'Lumbridge General Store',description:'A small shop selling basic supplies.'},
+ chicken:{name:"Farmer Fred's Chicken Coop",description:'Chickens peck around their nesting boxes.'},
+ cows:{name:'Eastern Lumbridge Cow Field',description:'A dairy cow wearing a bell grazes nearby.'},
+ wheat:{name:'Lumbridge Wheat Field',description:'Golden wheat sways beside Mill Lane Mill.'},
+ mill:{name:'Mill Lane Mill',description:'A three-storey windmill with a hopper and flour bin.'}
+};
+let questState=null,questBusy=false,questGame=null,questFrame=null;
+const questMusic=new Audio('assets/autumn-voyage.mp3');questMusic.loop=true;questMusic.volume=.48;
+const questCookImage=new Image();questCookImage.src='assets/lumbridge-cook.png';
+function startQuestMusic(){if(!questMusic.paused)return;questMusic.currentTime=0;questMusic.play().catch(()=>{})}
+function stopQuestMusic(reset=true){questMusic.pause();if(reset)questMusic.currentTime=0}
+let questDialogueTimer=null,questDialogueQueue=[],questDialogueIndex=0,questDialogueResolve=null;
+function questSpeakerName(speaker){return speaker==='You'?(character?.username||'Adventurer'):speaker}
+function questSpeakerFace(speaker){if(speaker==='Cook')return '👨‍🍳';if(speaker==='Shop Assistant')return '🧑‍💼';if(speaker==='You')return '🙂';return '💬'}
+function renderQuestDialogueLine(){const line=questDialogueQueue[questDialogueIndex];if(!line)return finishQuestDialogue();const [speaker,text]=line;$('questDialogueSpeaker').textContent=questSpeakerName(speaker);$('questDialogueFace').textContent=questSpeakerFace(speaker);$('questDialogueText').textContent=text;$('questDialogue').classList.remove('hidden')}
+function showQuestConversation(lines){cancelQuestDialogue(false);questDialogueQueue=lines;questDialogueIndex=0;renderQuestDialogueLine();return new Promise(resolve=>{questDialogueResolve=resolve})}
+function advanceQuestDialogue(){if($('questDialogue').classList.contains('hidden'))return false;questDialogueIndex++;if(questDialogueIndex>=questDialogueQueue.length)finishQuestDialogue();else renderQuestDialogueLine();return true}
+function finishQuestDialogue(){clearTimeout(questDialogueTimer);$('questDialogue').classList.add('hidden');questDialogueQueue=[];questDialogueIndex=0;const resolve=questDialogueResolve;questDialogueResolve=null;if(resolve)resolve()}
+function cancelQuestDialogue(resolve=true){clearTimeout(questDialogueTimer);$('questDialogue').classList.add('hidden');questDialogueQueue=[];questDialogueIndex=0;const done=questDialogueResolve;questDialogueResolve=null;if(resolve&&done)done()}
+function showQuestDialogue(text,duration=0,speaker='Narrator'){showQuestConversation([[speaker,text]]);if(duration)questDialogueTimer=setTimeout(finishQuestDialogue,duration)}
+function hideQuestDialogue(){cancelQuestDialogue(true)}
+const qKeys={};
+const QUEST_SCENES={
+ world:{spawn:[445,365],walls:[],objects:[
+  {x:350,y:300,w:150,h:120,type:'portal',to:'kitchen',label:'Lumbridge Castle'},
+  {x:330,y:432,w:100,h:65,type:'portal',to:'cellar',label:'Castle Cellar'},
+  {x:570,y:330,w:115,h:88,type:'portal',to:'store',label:'General Store'},
+  {x:690,y:125,w:130,h:95,type:'portal',to:'chicken',label:'Chicken Coop'},
+  {x:585,y:75,w:150,h:100,type:'portal',to:'cows',label:'Cow Field'},
+  {x:210,y:105,w:165,h:115,type:'portal',to:'wheat',label:'Wheat Field'},
+  {x:80,y:65,w:115,h:150,type:'portal',to:'mill',label:'Mill Lane Mill'}]},
+ kitchen:{spawn:[100,420],objects:[{x:670,y:165,w:70,h:70,type:'action',action:'talk_cook',label:'Cook'},{x:480,y:285,w:45,h:35,type:'action',action:'take_pot',label:'Pot'},{x:50,y:445,w:110,h:55,type:'exit',label:'Exit'}]},
+ cellar:{spawn:[100,420],objects:[{x:500,y:290,w:50,h:55,type:'action',action:'take_bucket',label:'Bucket'},{x:50,y:445,w:110,h:55,type:'exit',label:'Stairs up'}]},
+ store:{spawn:[100,420],objects:[{x:660,y:180,w:70,h:70,type:'action',action:'buy_supplies',label:'Shopkeeper'},{x:50,y:445,w:110,h:55,type:'exit',label:'Exit'}]},
+ chicken:{spawn:[100,420],objects:[{x:610,y:280,w:44,h:35,type:'action',action:'take_egg',label:'Egg'},{x:50,y:445,w:110,h:55,type:'exit',label:'Gate'}]},
+ cows:{spawn:[100,420],objects:[{x:610,y:245,w:95,h:65,type:'action',action:'milk_cow',label:'Dairy cow'},{x:50,y:445,w:110,h:55,type:'exit',label:'Gate'}]},
+ wheat:{spawn:[100,420],objects:[{x:560,y:180,w:180,h:150,type:'action',action:'pick_grain',label:'Wheat'},{x:50,y:445,w:110,h:55,type:'exit',label:'Path'}]},
+ mill:{spawn:[100,420],objects:[{x:620,y:115,w:85,h:55,type:'action',action:'load_hopper',label:'Hopper'},{x:735,y:190,w:35,h:70,type:'action',action:'pull_lever',label:'Lever'},{x:555,y:350,w:90,h:60,type:'action',action:'collect_flour',label:'Flour bin'},{x:50,y:445,w:110,h:55,type:'exit',label:'Exit'}]}
+};
+async function loadQuestProfile(){const{data,error}=await db.rpc('get_cooks_assistant_state');if(error){console.warn('Quest system not installed.',error);character.cooking_xp=0;return null}questState=data?.[0]||null;if(questState){character.cooking_xp=Number(questState.cooking_xp)||0;character.gp=Number(questState.gp)||0;character.quest_points=Number(questState.quest_points)||0}return questState}
+async function openQuests(){if(!character){toast('Log in before starting a quest.');openCharacterDialog('login');return}$('questsDialog').showModal();await loadQuestProfile();renderQuestJournal()}
+function renderQuestJournal(){const q=questState||{},completed=Boolean(q.completed),active=q.status==='active';$('questPointsTotal').textContent=Number(q.quest_points||0).toLocaleString('en-GB');$('selectCooksAssistant').classList.toggle('quest-crossed',completed);$('cooksQuestMark').textContent=completed?'✓':active?'◆':'○';$('cooksQuestMark').className=completed?'complete':active?'active':'';$('questOverview').classList.toggle('hidden',active);$('questAdventure').classList.toggle('hidden',!active);$('startCooksQuest').textContent=active?'CONTINUE QUEST':completed?'REPLAY QUEST':'START QUEST';$('startCooksQuest').disabled=false;if(active){$('questAdventure').classList.remove('hidden');renderQuestAdventure();if(!questGame||!questFrame)startQuestGame()}}
+function questHas(key){return Boolean(questState?.[key])}
+function renderQuestAdventure(){if(!questState)return;$('questCookingXp').textContent=`${Number(questState.cooking_xp||0).toLocaleString('en-GB')} Cooking XP`;$('questGp').textContent=`${Number(questState.gp||0).toLocaleString('en-GB')} GP`;const items=[['bucket','Bucket',questHas('has_bucket')],['pot','Pot',questHas('has_pot')],['egg','Egg',questHas('has_egg')],['milk','Milk',questHas('has_milk')],['grain','Grain',questHas('has_grain')],['flour','Flour',questHas('has_flour')]];$('questInventory').innerHTML=items.map(([id,label,got])=>`<div class="quest-item ${got?'owned':''}"><span>${{bucket:'🪣',pot:'◉',egg:'🥚',milk:'🥛',grain:'🌾',flour:'⚪'}[id]}</span><b>${label}</b><small>${got?'Obtained':'Empty'}</small>${got?`<button type="button" class="quest-drop-item" data-drop="${id}">DROP</button>`:''}</div>`).join('');const needed=[];if(!questHas('has_egg'))needed.push('egg');if(!questHas('has_milk'))needed.push('milk');if(!questHas('has_flour'))needed.push('flour');$('questStatusText').textContent=questState.completed?'Quest complete!':needed.length?`Still needed: ${needed.join(', ')}.`:'Return to the Cook with all ingredients.'}
+async function startCooksAssistant(){if(!character)return;if(questState?.status==='active'){$('questOverview').classList.add('hidden');$('questAdventure').classList.remove('hidden');renderQuestAdventure();startQuestGame();return}const{data,error}=await db.rpc('cooks_assistant_action',{p_action:'start'});if(error){console.error(error);toast('Run update-cooks-assistant.sql in Supabase first.');return}questState=data?.[0];character.cooking_xp=Number(questState.cooking_xp)||0;renderQuestJournal();toast('Quest started — use WASD to explore Lumbridge!')}
+function startQuestGame(){cancelAnimationFrame(questFrame);startQuestMusic();const saved=questState?.location||'kitchen';questGame={scene:saved==='kitchen'?'kitchen':saved,p:{x:100,y:420,r:13,dir:1},near:null,last:performance.now()};const sc=QUEST_SCENES[questGame.scene]||QUEST_SCENES.world;questGame.p.x=sc.spawn[0];questGame.p.y=sc.spawn[1];questFrame=requestAnimationFrame(questLoop)}
+function questLoop(now){if(!$('questsDialog').open||!questGame){questFrame=null;return;}const dt=Math.min(.035,(now-questGame.last)/1000||0);questGame.last=now;updateQuestGame(dt);drawQuestGame();questFrame=requestAnimationFrame(questLoop)}
+function updateQuestGame(dt){const p=questGame.p,speed=185;let dx=(qKeys.KeyD||qKeys.ArrowRight?1:0)-(qKeys.KeyA||qKeys.ArrowLeft?1:0),dy=(qKeys.KeyS||qKeys.ArrowDown?1:0)-(qKeys.KeyW||qKeys.ArrowUp?1:0);if(dx||dy){const l=Math.hypot(dx,dy);dx/=l;dy/=l;p.x=Math.max(18,Math.min(882,p.x+dx*speed*dt));p.y=Math.max(42,Math.min(502,p.y+dy*speed*dt));if(dx)p.dir=Math.sign(dx)}const scene=QUEST_SCENES[questGame.scene];questGame.near=null;for(const o of scene.objects){const cx=Math.max(o.x,Math.min(p.x,o.x+o.w)),cy=Math.max(o.y,Math.min(p.y,o.y+o.h));if(Math.hypot(p.x-cx,p.y-cy)<58){questGame.near=o;break}}$('questPrompt').textContent=questGame.near?`Press E to ${questGame.near.type==='portal'?'enter':questGame.near.type==='exit'?'leave':'interact with'} ${questGame.near.label}`:'Explore with WASD. Walk close to people, items and entrances.'}
+async function questInteract(){if(!$('questDialogue').classList.contains('hidden')){advanceQuestDialogue();return;}if(!questGame?.near||questBusy){if(questGame)$('questPrompt').textContent='Move closer to the highlighted person, item or doorway, then press E.';return;}const o=questGame.near;if(o.type==='portal'){await setQuestScene(o.to)}else if(o.type==='exit'){questGame.scene='world';questGame.p.x=445;questGame.p.y=365;updateQuestSceneText()}else if(o.type==='action'){let action=o.action;if(action==='talk_cook'&&questHas('has_egg')&&questHas('has_milk')&&questHas('has_flour'))action='deliver';if(action==='buy_supplies'){await runShopAssistantDialogue();return}await performQuestAction(action)}}
+
+async function runShopAssistantDialogue(){
+  if(questBusy)return;
+  questBusy=true;
+  await showQuestConversation([
+    ['Shop Assistant','Welcome to the Lumbridge General Store. Looking for supplies?'],
+    ['You','I need a bucket and a pot for the Cook.'],
+    ['Shop Assistant','A bucket is 2 coins and a pot is 1 coin. That will be 3 GP altogether.'],
+    ['You','...I do not actually have any money.'],
+    ['Shop Assistant','You came into my shop with no coins?'],
+    ['Shop Assistant','You are completely broke. Go find them yourself.'],
+    ['Shop Assistant','Try the castle cellar for a bucket and the castle kitchen for a pot.']
+  ]);
+  $('questPrompt').textContent='The Shop Assistant refuses to help. Search Lumbridge Castle for the bucket and pot.';
+  questBusy=false;
+}
+async function setQuestScene(scene){questBusy=true;const{data,error}=await db.rpc('cooks_assistant_action',{p_action:`travel_${scene}`});questBusy=false;if(error){toast('Could not enter that location.');return}questState=data?.[0];questGame.scene=scene;const sp=QUEST_SCENES[scene].spawn;questGame.p.x=sp[0];questGame.p.y=sp[1];renderQuestAdventure();updateQuestSceneText()}
+function updateQuestSceneText(){const info=QUEST_LOCATIONS[questGame.scene]||QUEST_LOCATIONS.world;$('questLocationName').textContent=info.name;$('questLocationDescription').textContent=info.description}
+async function performQuestAction(action){if(questBusy||!action)return;if(action==='talk_cook'){const line="Please help! I need an egg, a bucket of milk and a pot of flour for Duke Horacio's birthday cake.";$('questPrompt').textContent=`Cook: ${line}`;await showQuestConversation([['Cook',line],['You','I will find the ingredients for you.']]);return;}const wasCompleted=Boolean(questState?.completed);questBusy=true;$('questPrompt').textContent='Working…';await new Promise(r=>setTimeout(r,650));const{data,error}=await db.rpc('cooks_assistant_action',{p_action:action});questBusy=false;if(error){toast(error.message||'You cannot do that yet.');return}questState=data?.[0];character.cooking_xp=Number(questState.cooking_xp)||0;character.gp=Number(questState.gp)||0;character.quest_points=Number(questState.quest_points)||0;renderCharacter();renderQuestAdventure();if(action==='deliver'&&questState.completed)showQuestCompletion(!wasCompleted)}
+async function dropQuestItem(item){
+  if(!questState||questBusy||!item)return;
+  const labels={bucket:'bucket',pot:'pot',egg:'egg',milk:'bucket of milk',grain:'grain',flour:'pot of flour'};
+  if(!confirm(`Drop your ${labels[item]||item}? You can collect it again.`))return;
+  questBusy=true;
+  const {data,error}=await db.rpc('cooks_assistant_action',{p_action:`drop_${item}`});
+  questBusy=false;
+  if(error){toast(error.message||'Could not drop that item. Run the updated quest SQL.');return}
+  questState=data?.[0]||questState;
+  renderQuestAdventure();
+  showQuestDialogue(`You drop the ${labels[item]||item}.`,2200,'Narrator');
+}
+function showQuestCompletion(firstCompletion){
+  $('questCompleteText').textContent=firstCompletion?"You have completed Cook's Assistant!":"You have replayed Cook's Assistant!";
+  $('questRewardCooking').textContent=firstCompletion?'1,000':'0';
+  $('questRewardGp').textContent=firstCompletion?'5,000':'0';
+  $('questRewardPoints').textContent=firstCompletion?'1':'0';
+  stopQuestMusic();hideQuestDialogue();$('questCompleteOverlay').classList.remove('hidden');
+}
+function closeQuestCompletion(){$('questCompleteOverlay').classList.add('hidden');renderQuestJournal()}
+async function resetCooksAssistant(){
+  if(!character||questBusy)return;
+  if(!confirm('Reset Cook\'s Assistant? All temporary quest items and progress will be removed.'))return;
+  questBusy=true;
+  const {data,error}=await db.rpc('cooks_assistant_action',{p_action:'reset'});
+  questBusy=false;
+  if(error){toast('Run the updated Cook\'s Assistant SQL, then try again.');return}
+  questState=data?.[0]||null;
+  cancelAnimationFrame(questFrame);questFrame=null;questGame=null;Object.keys(qKeys).forEach(k=>delete qKeys[k]);questBusy=false;
+  stopQuestMusic();cancelQuestDialogue(true);
+  renderQuestJournal();
+  toast('Cook\'s Assistant has been reset.');
+}
+function drawQuestGame(){const c=$('questCanvas'),x=c.getContext('2d'),scene=questGame.scene,p=questGame.p;x.clearRect(0,0,c.width,c.height);drawQuestScene(x,scene);for(const o of QUEST_SCENES[scene].objects)drawQuestObject(x,o);x.save();x.translate(p.x,p.y);x.scale(p.dir,1);x.fillStyle='#2f5b9a';x.fillRect(-10,-2,20,24);x.fillStyle='#d5aa82';x.beginPath();x.arc(0,-12,10,0,7);x.fill();x.fillStyle='#70452c';x.fillRect(-9,-22,18,7);x.fillStyle='#24221f';x.fillRect(-10,22,7,10);x.fillRect(3,22,7,10);x.restore();if(questGame.near){x.strokeStyle='#ffe06b';x.lineWidth=3;x.strokeRect(questGame.near.x-3,questGame.near.y-3,questGame.near.w+6,questGame.near.h+6)}}
+function drawQuestScene(x,s){
+  const t=performance.now()/1000;
+  const sky='#8db9d7',grass='#6f9e4c',path='#c5aa70',water='#5b94bb';
+  if(s==='world'){
+    x.fillStyle=grass;x.fillRect(0,0,900,520);
+    x.fillStyle=water;x.fillRect(430,0,72,520);x.strokeStyle='rgba(220,245,255,.35)';x.lineWidth=2;for(let yy=10;yy<520;yy+=24){x.beginPath();x.moveTo(438,yy+Math.sin(t*2+yy)*3);x.lineTo(494,yy+Math.sin(t*2+yy)*3);x.stroke();}
+    x.fillStyle=path;x.fillRect(0,350,900,48);x.fillRect(390,0,42,520);
+    // trees and hedges
+    for(const [tx,ty] of [[40,80],[840,65],[760,440],[95,430],[520,55],[255,455]]){x.fillStyle='#4b7135';x.beginPath();x.arc(tx,ty,24,0,7);x.fill();x.fillStyle='#76502d';x.fillRect(tx-5,ty+18,10,26)}
+    // small Lumbridge castle
+    x.fillStyle='#c8c3b7';x.fillRect(350,270,150,120);x.fillStyle='#98958c';x.fillRect(365,238,34,45);x.fillRect(450,238,34,45);x.fillStyle='#6d6a65';for(let i=0;i<4;i++){x.fillRect(350+i*42,258,22,18)}x.fillStyle='#49372b';x.fillRect(410,330,34,60);x.fillStyle='#78a7d1';x.fillRect(375,300,18,25);x.fillRect(458,300,18,25);
+    // cellar hatch
+    x.fillStyle='#4a3424';x.fillRect(330,432,100,65);x.strokeStyle='#b58a52';x.strokeRect(342,444,76,42);
+    // general store
+    x.fillStyle='#a97849';x.fillRect(570,330,115,88);x.fillStyle='#6d3e2b';x.beginPath();x.moveTo(558,330);x.lineTo(628,285);x.lineTo(698,330);x.fill();x.fillStyle='#3b281d';x.fillRect(615,365,26,53);x.fillStyle='#e2c26f';x.fillRect(580,342,32,22);
+    // chicken coop
+    x.fillStyle='#9b6e3f';x.fillRect(690,125,130,95);x.strokeStyle='#684727';for(let i=0;i<6;i++)x.strokeRect(700+i*18,135,12,70);x.fillStyle='#73462e';x.fillRect(742,150,26,70);
+    // cow field fence
+    x.strokeStyle='#8c6638';x.lineWidth=5;x.strokeRect(585,75,150,100);for(let i=0;i<4;i++)x.strokeRect(595+i*36,85,4,80);
+    // wheat field
+    x.fillStyle='#c6ad3a';x.fillRect(210,105,165,115);x.strokeStyle='#e7cf62';x.lineWidth=2;for(let i=0;i<14;i++){let wx=218+(i*11)%150;x.beginPath();x.moveTo(wx,210);x.lineTo(wx-4,130+(i%3)*10);x.stroke()}
+    // mill
+    x.fillStyle='#ded3bd';x.fillRect(95,95,85,120);x.fillStyle='#81583d';x.beginPath();x.moveTo(80,95);x.lineTo(138,55);x.lineTo(195,95);x.fill();x.strokeStyle='#6a533d';x.lineWidth=5;x.beginPath();x.moveTo(138,95);x.lineTo(138,25);x.stroke();for(let a=0;a<4;a++){x.save();x.translate(138,70);x.rotate(a*Math.PI/2);x.fillStyle='#e9dfc9';x.fillRect(0,-5,62,10);x.restore()}
+  }else{
+    const base={kitchen:'#9a744c',cellar:'#55514c',store:'#9a7a54',chicken:'#82a854',cows:'#79a451',wheat:'#b9a13d',mill:'#92734e'}[s];x.fillStyle=base;x.fillRect(0,0,900,520);
+    if(s==='kitchen'){x.fillStyle='#7d5a38';for(let i=0;i<8;i++)x.fillRect(i*120,0,4,520);x.fillStyle='#b78b58';x.fillRect(370,245,220,70);x.fillStyle='#5c3d27';x.fillRect(600,90,185,95);x.fillStyle='#d8c5a2';x.fillRect(635,120,80,35);x.fillStyle='#c24c3a';x.beginPath();x.arc(675,112,28,Math.PI,0);x.fill();}
+    if(s==='cellar'){x.fillStyle='#3d3a36';for(let y=0;y<520;y+=44)for(let xx=0;xx<900;xx+=90)x.strokeRect(xx+(y/44%2)*45,y,90,44);x.fillStyle='#6f4d2d';x.fillRect(430,250,170,95);x.fillStyle='#2f261f';x.fillRect(50,420,110,80)}
+    if(s==='store'){x.fillStyle='#6d4c32';x.fillRect(560,80,250,250);for(let y=105;y<310;y+=65){x.fillStyle='#3b2b20';x.fillRect(580,y,210,10);for(let xx=600;xx<770;xx+=55){x.fillStyle=['#c9a652','#8fb1c8','#c67750'][(xx+y)%3];x.fillRect(xx,y-28,24,28)}}x.fillStyle='#5a3e29';x.fillRect(620,350,170,65)}
+    if(s==='chicken'){x.fillStyle='#78502d';x.fillRect(420,170,260,210);x.strokeStyle='#d4b074';x.lineWidth=5;for(let i=0;i<9;i++)x.strokeRect(430+i*28,180,5,180);for(const [cx,cy] of [[520,320],[600,260],[690,350]]){x.fillStyle='#f1efe8';x.beginPath();x.arc(cx,cy,18,0,7);x.fill();x.fillStyle='#d79a2e';x.fillRect(cx+15,cy-4,12,7);x.fillStyle='#d53a2c';x.fillRect(cx-4,cy-25,8,10)}}
+    if(s==='cows'){x.fillStyle='#6a9449';x.fillRect(0,0,900,520);x.strokeStyle='#8b6437';x.lineWidth=5;x.strokeRect(70,65,760,390);for(let i=0;i<10;i++)x.strokeRect(90+i*70,75,5,370);drawCow(x,650,275,1)}
+    if(s==='wheat'){x.fillStyle='#c2aa40';x.fillRect(0,0,900,520);x.strokeStyle='#ead56b';x.lineWidth=2;for(let i=0;i<120;i++){const wx=(i*71)%900,wy=80+(i*43)%410;x.beginPath();x.moveTo(wx,wy+24);x.lineTo(wx-4,wy);x.stroke();x.beginPath();x.moveTo(wx-4,wy+8);x.lineTo(wx-12,wy+2);x.moveTo(wx-4,wy+12);x.lineTo(wx+5,wy+5);x.stroke()}}
+    if(s==='mill'){x.fillStyle='#ded0b5';x.fillRect(80,55,740,420);x.strokeStyle='#7b6247';x.lineWidth=4;for(let y=110;y<470;y+=90)x.strokeRect(80,y,740,4);x.fillStyle='#755238';x.fillRect(575,90,160,80);x.fillStyle='#c7a96b';x.beginPath();x.moveTo(600,90);x.lineTo(655,45);x.lineTo(710,90);x.fill();x.fillStyle='#70502f';x.fillRect(740,160,18,110);x.fillStyle='#84633f';x.fillRect(530,330,150,90)}
+  }
+  // Ambient motes make each area feel less static.
+  x.fillStyle='rgba(255,238,170,.45)';for(let i=0;i<12;i++){const px=(i*83+t*18)%900,py=55+((i*47+t*10)%420);x.fillRect(px,py,2,2)}
+  updateQuestSceneText();
+}
+function drawCow(x,cx,cy,dir=1){x.save();x.translate(cx,cy);x.scale(dir,1);x.fillStyle='#eee8da';x.fillRect(-42,-22,76,45);x.fillStyle='#2f2d2a';x.fillRect(-32,-18,23,19);x.fillRect(5,0,20,18);x.fillStyle='#eee8da';x.fillRect(30,-30,34,31);x.fillStyle='#2f2d2a';x.fillRect(43,-22,10,10);x.fillStyle='#c6b69f';x.fillRect(-32,22,9,27);x.fillRect(15,22,9,27);x.strokeStyle='#6f522e';x.beginPath();x.arc(52,-29,9,0,Math.PI);x.stroke();x.fillStyle='#d5aa3d';x.beginPath();x.arc(51,3,6,0,7);x.fill();x.restore()}
+function drawCook(x,cx,cy){
+  x.save();x.translate(cx,cy);
+  if(questCookImage.complete&&questCookImage.naturalWidth){
+    x.imageSmoothingEnabled=false;
+    x.drawImage(questCookImage,-42,-58,84,100);
+  }else{
+    x.fillStyle='#f4f0e6';x.beginPath();x.arc(0,-31,24,Math.PI,0);x.fill();x.fillRect(-23,-31,46,15);x.fillStyle='#d2a17d';x.beginPath();x.arc(0,-13,16,0,7);x.fill();x.fillStyle='#eee9dd';x.fillRect(-18,2,36,43);
+  }
+  x.restore();
+}
+function drawQuestObject(x,o){
+  if(o.action==='talk_cook'){drawCook(x,o.x+o.w/2,o.y+o.h/2+5);return}
+  if(o.action==='milk_cow'){drawCow(x,o.x+o.w/2,o.y+o.h/2,1);return}
+  if(o.action==='buy_supplies'){const cx=o.x+o.w/2,cy=o.y+o.h/2;x.save();x.translate(cx,cy);x.fillStyle='#d3a47e';x.beginPath();x.arc(0,-18,15,0,7);x.fill();x.fillStyle='#5a351f';x.fillRect(-14,-34,28,9);x.fillStyle='#58733d';x.fillRect(-20,-2,40,38);x.fillStyle='#d6bb70';x.fillRect(-22,36,44,8);x.restore();return}
+  if(o.action==='take_egg'){x.fillStyle='#f5efe0';x.beginPath();x.ellipse(o.x+o.w/2,o.y+o.h/2,13,18,0,0,7);x.fill();return}
+  if(o.action==='take_bucket'){x.fillStyle='#b9b7ad';x.fillRect(o.x+8,o.y+10,o.w-16,o.h-14);x.strokeStyle='#4d4d49';x.strokeRect(o.x+8,o.y+10,o.w-16,o.h-14);x.beginPath();x.arc(o.x+o.w/2,o.y+12,o.w/2-8,Math.PI,0);x.stroke();return}
+  if(o.action==='take_pot'){x.fillStyle='#b98c5f';x.beginPath();x.ellipse(o.x+o.w/2,o.y+o.h/2,o.w/2-4,o.h/2-5,0,0,7);x.fill();x.fillStyle='#66442a';x.fillRect(o.x+3,o.y+8,o.w-6,6);return}
+  if(o.action==='pick_grain'){x.strokeStyle='#f0d86a';for(let i=0;i<12;i++){let xx=o.x+8+i*14;x.beginPath();x.moveTo(xx,o.y+o.h);x.lineTo(xx-4,o.y+20+(i%3)*12);x.stroke()}return}
+  const colors={portal:'#6c4d2b',exit:'#3c2d1e',action:'#d7b45b'};x.fillStyle=colors[o.type]||'#fff';x.fillRect(o.x,o.y,o.w,o.h);x.strokeStyle='#2d2114';x.lineWidth=3;x.strokeRect(o.x,o.y,o.w,o.h);x.fillStyle='#17110b';x.font='bold 13px sans-serif';x.textAlign='center';x.fillText(o.label,o.x+o.w/2,o.y+o.h/2+5)
+}
+// PET WARS — 15-second server-resolved, 50/50 pet wrestling.
+let petWarState=null,petWarPollTimer=null,petWarAnimationTimer=null,petWarResolving=false;
+const PET_WAR_LOCATIONS={misthalin:'Misthalin · Lumbridge wrestling paddock',asgarnia:'Asgarnia · Falador training ring',kandarin:'Kandarin · Tree Gnome arena',morytania:'Morytania · Canifis night cage'};
+const PET_WAR_LINES=['A tiny headbutt lands!','Both pets are pretending this is serious.','A suspiciously powerful paw swipe!','The referee has lost control.','One pet attempts an illegal belly flop.','The crowd chants for absolutely no reason.','A devastatingly cute tackle!','Neither pet understands the rules.'];
+function validPetWarWager(value){const n=Math.floor(Number(value));return Number.isFinite(n)&&n>=1&&n<=1000?n:0}
+async function openPetWars(){
+  if(!character){toast('Log in to enter Pet Wars.');openCharacterDialog('login');return}
+  $('petWarsDialog').showModal();$('petWarsLobby').classList.remove('hidden');$('petWarsFight').classList.add('hidden');$('petWarsLobbyMessage').textContent='Loading your pet and GP…';
+  const [bank,pet]=await Promise.all([db.rpc('get_my_bank'),db.rpc('get_my_active_pet')]);
+  if(bank.error||pet.error){$('petWarsLobbyMessage').textContent='Could not load Pet Wars. Run update-pet-wars.sql in Supabase.';return}
+  const gp=Number(bank.data?.[0]?.gp||0),petId=pet.data?.[0]?.active_pet,meta=PET_CATALOG[petId];
+  $('petWarsGp').textContent=`${gp.toLocaleString('en-GB')} GP`;$('petWarsMyPet').textContent=meta?(pet.data?.[0]?.pet_names?.[petId]||meta.name):'No pet out';
+  $('petWarsCreate').disabled=!meta;$('petWarsJoin').disabled=!meta;$('petWarsLobbyMessage').textContent=meta?'Create a fight or enter a six-character code.':'Put a pet out from your Bank before entering Pet Wars.';
+}
+async function createPetWar(){
+  const wager=validPetWarWager($('petWarsCreateWager').value);if(!wager){$('petWarsLobbyMessage').textContent='Choose a wager between 1 and 1,000 GP.';return}
+  $('petWarsCreate').disabled=true;$('petWarsLobbyMessage').textContent='Booking the wrestling arena… Any abandoned waiting fight will be cancelled and refunded.';
+  const {data,error}=await db.rpc('create_pet_war',{p_wager:wager,p_pick_mine:$('petWarsCreatePick').value==='mine'});$('petWarsCreate').disabled=false;
+  if(error||!data?.[0]){$('petWarsLobbyMessage').textContent=error?.message||'Could not create the fight.';return}await enterPetWar(data[0].room_code);
+}
+async function joinPetWar(){
+  const code=$('petWarsCodeInput').value.trim().toUpperCase(),wager=validPetWarWager($('petWarsJoinWager').value);if(code.length!==6){$('petWarsLobbyMessage').textContent='Enter the six-character fight code.';return}if(!wager){$('petWarsLobbyMessage').textContent='Choose a wager between 1 and 1,000 GP.';return}
+  $('petWarsJoin').disabled=true;$('petWarsLobbyMessage').textContent='Entering the arena…';const {data,error}=await db.rpc('join_pet_war',{p_room_code:code,p_wager:wager,p_pick_mine:$('petWarsJoinPick').value==='mine'});$('petWarsJoin').disabled=false;if(error){$('petWarsLobbyMessage').textContent=error.message||'Could not join that fight.';return}await enterPetWar(code);
+}
+async function enterPetWar(code){petWarState={code};$('petWarsLobby').classList.add('hidden');$('petWarsFight').classList.remove('hidden');$('petWarsCode').textContent=code;clearInterval(petWarPollTimer);await pollPetWar();petWarPollTimer=setInterval(pollPetWar,500)}
+async function pollPetWar(){
+  if(!petWarState||petWarResolving)return;const {data,error}=await db.rpc('get_pet_war',{p_room_code:petWarState.code});if(error||!data?.[0]){$('petWarsFightMessage').textContent=error?.message||'Fight unavailable.';return}petWarState={...data[0],code:petWarState.code};renderPetWar();
+  if(petWarState.status==='fighting'){const elapsed=(Date.now()-new Date(petWarState.started_at).getTime())/1000;if(elapsed>=15&&!petWarResolving){petWarResolving=true;await db.rpc('resolve_pet_war',{p_room_code:petWarState.code});petWarResolving=false}}
+}
+function renderPetWar(){
+  const w=petWarState,arena=$('petWarsArena'),hMeta=PET_CATALOG[w.host_pet],gMeta=PET_CATALOG[w.guest_pet];$('petWarsCode').textContent=w.room_code||w.code;$('petWarsLocation').textContent=PET_WAR_LOCATIONS[w.location]||w.location;arena.className=`pet-wars-arena location-${w.location}`;
+  const host=$('petWarsHost'),guest=$('petWarsGuest');host.querySelector('.pet-war-visual').innerHTML=petMarkup(w.host_pet,w.host_pet_name||hMeta?.name||'Host pet','pet-war-art');guest.querySelector('.pet-war-visual').innerHTML=petMarkup(w.guest_pet,w.guest_pet_name||gMeta?.name||'Guest pet','pet-war-art');host.querySelector('.pet-war-name').textContent=w.host_pet_name||hMeta?.name||'Host pet';guest.querySelector('.pet-war-name').textContent=w.guest_pet_name||gMeta?.name||'Guest pet';host.querySelector('.pet-war-owner').textContent=w.host_username;guest.querySelector('.pet-war-owner').textContent=w.guest_username||'Waiting for challenger';
+  $('petWarsHostBet').textContent=`${w.host_username}: ${Number(w.host_wager||0).toLocaleString('en-GB')} GP · backed ${Number(w.host_pick)===1?'host':'guest'}`;$('petWarsGuestBet').textContent=w.guest_username?`${w.guest_username}: ${Number(w.guest_wager||0).toLocaleString('en-GB')} GP · backed ${Number(w.guest_pick)===1?'host':'guest'}`:'Waiting for player two…';
+  $('petWarsCancel').classList.toggle('hidden',w.status!=='waiting'||w.host_username!==character.username);
+  if(w.status==='waiting'){$('petWarsTimer').textContent='15.0';$('petWarsCommentary').textContent=`Share code ${w.room_code||w.code} with another player.`;$('petWarsFightMessage').textContent='Your wager is safely held until someone joins, or you cancel.';return}
+  if(w.status==='fighting'){arena.classList.add('fighting');const elapsed=Math.max(0,(Date.now()-new Date(w.started_at).getTime())/1000),remaining=Math.max(0,15-elapsed);$('petWarsTimer').textContent=remaining.toFixed(1);$('petWarsFightMessage').textContent='A random winner will be selected when the bell rings.';if(!petWarAnimationTimer){let i=0;$('petWarsCommentary').textContent=PET_WAR_LINES[0];petWarAnimationTimer=setInterval(()=>{$('petWarsCommentary').textContent=PET_WAR_LINES[++i%PET_WAR_LINES.length]},1500)}return}
+  clearInterval(petWarAnimationTimer);petWarAnimationTimer=null;arena.classList.add('finished');const winner=Number(w.winner_slot),mine=w.host_username===character.username?1:2,payout=mine===1?Number(w.host_payout||0):Number(w.guest_payout||0);host.classList.toggle('winner',winner===1);host.classList.toggle('loser',winner===2);guest.classList.toggle('winner',winner===2);guest.classList.toggle('loser',winner===1);$('petWarsTimer').textContent='0.0';$('petWarsCommentary').textContent=`${winner===1?(w.host_pet_name||hMeta?.name):(w.guest_pet_name||gMeta?.name)} WINS!`;$('petWarsFightMessage').textContent=payout>0?`Correct pick — you received ${payout.toLocaleString('en-GB')} GP!`:'Wrong pick — better luck in the next ridiculous fight.';clearInterval(petWarPollTimer);petWarPollTimer=null;
+}
+async function cancelPetWar(){if(!petWarState)return;const {error}=await db.rpc('cancel_pet_war',{p_room_code:petWarState.code});if(error){$('petWarsFightMessage').textContent=error.message;return}leavePetWar();await openPetWars()}
+function leavePetWar(){clearInterval(petWarPollTimer);clearInterval(petWarAnimationTimer);petWarPollTimer=petWarAnimationTimer=null;petWarState=null;$('petWarsFight').classList.add('hidden');$('petWarsLobby').classList.remove('hidden');if($('petWarsDialog').open)$('petWarsDialog').close()}
 $('can').onclick = async () => {
   $('can').classList.remove('pop');
   void $('can').offsetWidth;
@@ -1829,6 +2442,12 @@ $('showLogin').onclick = () => setAuthMode('login');
 $('showRegister').onclick = () => setAuthMode('register');
 $('characterSummary').onclick = openSkills;
 $('openAgility').onclick = openAgility;
+$('openMining').disabled=false;
+$('openQuests').disabled=false;
+$('openMining').onclick = openMining;
+$('mineStarButton').onclick = strikeShootingStar;
+$('stopMiningButton').onclick = stopShootingStar;
+$('miningOpenBank').onclick = ()=>{stopShootingStar();openBank()};
 $('openSlayer').onclick = openSlayer;
 $('openCombat').onclick = openCombat;
 document.querySelectorAll('.combat-weapon-choice').forEach(button => button.addEventListener('click', () => selectCombatWeapon(button.dataset.weapon)));
@@ -1841,11 +2460,17 @@ $('openRunecrafting').onclick = openRunecrafting;
 $('openWiseTask').onclick = openWiseTask;
 $('openBank').onclick = openBank;
 $('openGrandExchange').onclick = openGrandExchange;
+$('openPetWars').onclick = openPetWars;
+$('petWarsCreate').onclick = createPetWar;
+$('petWarsJoin').onclick = joinPetWar;
+$('petWarsCancel').onclick = cancelPetWar;
+$('petWarsLeave').onclick = leavePetWar;
 $('geSearchButton').onclick = searchGeItems;
 $('geSearch').addEventListener('input',()=>{clearTimeout(geSearchTimer);geSearchTimer=setTimeout(searchGeItems,260)});
 $('geSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchGeItems()}});
 $('wiseGetTask').onclick = requestWiseTask;
 $('wiseClaimTask').onclick = () => claimWiseTask(false);
+$('wiseSkipTask').onclick = skipWiseTask;
 $('rcCreateRoom').onclick = createRcRoom;
 $('rcPlayComputer').onclick = playRcComputer;
 document.querySelectorAll('.rc-ai-choice').forEach(b=>b.onclick=()=>selectRcAiDifficulty(b.dataset.ai));
@@ -1870,6 +2495,16 @@ gnomeCanvas.addEventListener('pointermove', gnomeBallMove);
 gnomeCanvas.addEventListener('pointerup', gnomeBallUp);
 gnomeCanvas.addEventListener('pointercancel', gnomeBallUp);
 $('openSkills').onclick = openSkills;
+$('openQuests').onclick = openQuests;
+$('startCooksQuest').onclick = startCooksAssistant;
+$('questInteractButton').onclick=questInteract;
+$('questInventory').addEventListener('click',e=>{const b=e.target.closest('[data-drop]');if(b)dropQuestItem(b.dataset.drop)});
+$('resetCooksQuest').onclick=resetCooksAssistant;
+$('closeQuestDialogue').onclick=e=>{e.stopPropagation();cancelQuestDialogue(true)};
+$('questDialogue').addEventListener('click',e=>{if(!e.target.closest('#closeQuestDialogue'))advanceQuestDialogue()});
+$('closeQuestComplete').onclick=closeQuestCompletion;
+window.addEventListener('keydown',e=>{if(!$('questsDialog').open)return;if(e.code==='Space'&&!$('questDialogue').classList.contains('hidden')){e.preventDefault();if(!e.repeat)advanceQuestDialogue();return}if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)&&$('questDialogue').classList.contains('hidden')){qKeys[e.code]=true;e.preventDefault()}if((e.code==='KeyE'||e.code==='Space')&&$('questDialogue').classList.contains('hidden')){questInteract();e.preventDefault()}});
+window.addEventListener('keyup',e=>{qKeys[e.code]=false});
 $('openLeaderboard').onclick = openLeaderboard;
 $('changeCharacter').onclick = async () => {
   $('changeCharacter').disabled = true;
@@ -1921,6 +2556,8 @@ document.querySelectorAll('[data-close]').forEach(button => {
     if (button.dataset.close === 'combatDialog') resetCombatGame();
     if (button.dataset.close === 'sailingDialog') resetSailingGame();
     if (button.dataset.close === 'runecraftingDialog') leaveRcRoom();
+    if (button.dataset.close === 'petWarsDialog') leavePetWar();
+    if (button.dataset.close === 'questsDialog') {cancelAnimationFrame(questFrame);questFrame=null;Object.keys(qKeys).forEach(k=>delete qKeys[k]);questBusy=false;stopQuestMusic();cancelQuestDialogue(true);}
     $(button.dataset.close).close();
   };
 });
@@ -1959,6 +2596,8 @@ db.auth.onAuthStateChange((_event, session) => {
 
 loadCount();
 loadCharacter();
+keepCoreAdventureButtonsEnabled();
+window.addEventListener('load', keepCoreAdventureButtonsEnabled);
 
 window.addEventListener('keydown',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;if(sailingRunning&&[' ','ArrowUp','w'].includes(k)){e.preventDefault();if(!e.repeat)sailingJump();if(sailingState)sailingState.held=true;}});window.addEventListener('keyup',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;if([' ','ArrowUp','w'].includes(k))sailingRelease();});const sailCanvas=$('sailingCanvas');sailCanvas.addEventListener('pointerdown',e=>{if(sailingRunning){e.preventDefault();sailingJump();if(sailingState)sailingState.held=true;}});sailCanvas.addEventListener('pointerup',sailingRelease);sailCanvas.addEventListener('pointercancel',sailingRelease);document.querySelectorAll('[data-sail]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();sailingJump();if(sailingState)sailingState.held=true;});b.addEventListener('pointerup',sailingRelease);b.addEventListener('pointercancel',sailingRelease);b.addEventListener('pointerleave',sailingRelease);});
 
@@ -2022,3 +2661,5 @@ window.addEventListener('keydown',e=>{const k=e.key.length===1?e.key.toLowerCase
 })();
 
 window.addEventListener('load',startRoamingPets);
+
+$('miningDialog').addEventListener('close',()=>{clearInterval(miningAfkPoll);clearInterval(miningLivePoll);clearInterval(miningChatTimer);miningAfkPoll=miningLivePoll=miningChatTimer=null;});
